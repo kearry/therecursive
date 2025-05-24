@@ -13,21 +13,97 @@ class TestRecursiveInterviewSystem(unittest.TestCase):
 
     def setUp(self):
         """Set up for each test method."""
-        # Mock external dependencies for RecursiveInterviewSystem instantiation
-        with patch('ollama.Client') as mock_ollama_client, \
-             patch('chromadb.PersistentClient') as mock_chromadb_client:
-            
-            # Configure the mock ChromaDB client and collections
-            mock_collection = MagicMock()
-            mock_chromadb_client.return_value.get_or_create_collection.return_value = mock_collection
-            
+        # Mock external clients
+        self.mock_ollama_client_instance = MagicMock(spec=sys.modules['ollama'].Client) # Use sys.modules for spec if ollama is complex
+        self.mock_chromadb_client_instance = MagicMock(spec=sys.modules['chromadb'].PersistentClient)
+
+        # Mock collections
+        self.mock_host_collection = MagicMock(spec=sys.modules['chromadb'].api.models.Collection.Collection)
+        self.mock_expert_collection = MagicMock(spec=sys.modules['chromadb'].api.models.Collection.Collection)
+        
+        # Patch the client instantiations within RecursiveInterviewSystem's __init__
+        self.ollama_patcher = patch('ollama.Client', return_value=self.mock_ollama_client_instance)
+        self.chromadb_patcher = patch('chromadb.PersistentClient', return_value=self.mock_chromadb_client_instance)
+        
+        self.mock_ollama_client = self.ollama_patcher.start()
+        self.mock_chromadb_client = self.chromadb_patcher.start()
+
+        # Mock _load_config to prevent file access and return an empty dict initially
+        with patch.object(RecursiveInterviewSystem, '_load_config', return_value={}) as mock_load_config:
             self.system = RecursiveInterviewSystem()
-            
-            # Assign mocks to instance if needed for specific tests, e.g.
-            self.mock_ollama_client = self.system.client # This is already the mock_ollama_client
-            self.mock_chromadb_client = self.system.chroma_client # This is already the mock_chromadb_client
-            self.mock_host_collection = self.system.host_collection
-            self.mock_expert_collection = self.system.expert_collection
+            # mock_load_config.assert_called_once() # Optional
+
+        # Override self.system.config with a comprehensive mock config for tests
+        self.system.config = {
+            'chromadb': {
+                'path': "./test_db",
+                'host_collection_name': "test_host_knowledge",
+                'expert_collection_name': "test_expert_knowledge",
+                'default_n_results': 3,
+                'host_pattern_n_results': 2
+            },
+            'host_ai_settings': {
+                'host_persona_definition': "Test Host Persona",
+                'host_knowledge': {
+                    'successful_pattern_query': "test successful questions",
+                    'pattern_id_prefix': "test_pattern_",
+                    'pattern_metadata_type': "test_successful_pattern"
+                }
+            },
+            'persona_settings': {
+                'default_persona_file_path': "personas/test_persona.md",
+                'persona_doc_id_prefix': "test_doc_"
+            },
+            'embedding_model': 'test-embed-model',
+            'host_llm_model': 'test-host-llm',
+            'host_llm_temperature': 0.75,
+            'expert_llm_model': 'test-expert-llm',
+            'expert_llm_temperature': 0.6,
+            'expert_response_max_words': 50,
+            'evaluation_llm_model': 'test-eval-llm',
+            'evaluation_llm_temperature': 0.05,
+            'prompts': {
+                'web_search_placeholder': "Test web search placeholder: {query}",
+                'evaluation': {
+                    'rationale_not_articulated': "Test: Rationale not articulated.",
+                    'rationale_no_rationale_provided': "Test: No rationale.",
+                    'rationale_parsing_error_prefix': "Test: Parse error prefix.",
+                    'rationale_exception_prefix': "Test: Exception prefix."
+                }
+            },
+            'interview': {
+                'max_exchanges': 5,
+                'max_follow_ups_per_response': 1,
+                'conversation_history_last_n': 3
+            },
+            'transcript_filename_prefix': "test_interview_",
+            'transcript_filename_suffix': ".test.json",
+            'default_expert_name': "Test Expert",
+            'default_topics': ["Test Topic 1"]
+        }
+
+        # Configure the mock ChromaDB client's get_or_create_collection
+        # to return the correct mock collection based on the (now configured) name
+        def get_collection_side_effect(name, **kwargs):
+            if name == self.system.config['chromadb']['host_collection_name']:
+                return self.mock_host_collection
+            elif name == self.system.config['chromadb']['expert_collection_name']:
+                return self.mock_expert_collection
+            return MagicMock() # Default mock if name doesn't match
+
+        self.mock_chromadb_client_instance.get_or_create_collection.side_effect = get_collection_side_effect
+        
+        # Re-assign system's client and collection attributes to our mocks,
+        # as __init__ would have used the config values now
+        self.system.client = self.mock_ollama_client_instance
+        self.system.chroma_client = self.mock_chromadb_client_instance
+        self.system.host_collection = self.mock_host_collection
+        self.system.expert_collection = self.mock_expert_collection
+        
+    def tearDown(self):
+        """Clean up after each test."""
+        self.ollama_patcher.stop()
+        self.chromadb_patcher.stop()
 
     # --- Tests for clean_response ---
     def test_clean_response_with_tags_and_whitespace(self):
@@ -64,7 +140,8 @@ class TestRecursiveInterviewSystem(unittest.TestCase):
     @patch('sys.stdout', new_callable=io.StringIO)
     def test_perform_web_search(self, mock_stdout):
         query = "test query for web search"
-        expected_output = f"Placeholder search result: Recent analysis on '{query}' suggests ongoing debates, particularly around its broader implications and future trends. Some studies point to emerging complexities, while public discourse reveals a spectrum of perspectives."
+        # Use the configured placeholder string
+        expected_output = self.system.config['prompts']['web_search_placeholder'].format(query=query)
         
         result = self.system.perform_web_search(query)
         self.assertEqual(result, expected_output)
@@ -83,10 +160,18 @@ class TestRecursiveInterviewSystem(unittest.TestCase):
         self.mock_expert_collection.query.return_value = mock_response
         
         expected_joined_docs = "doc1 text\n\ndoc2 text\n\ndoc3 text"
-        result = self.system.search_expert_knowledge(query, n_results=3)
-        
+        # Test with explicit n_results
+        result = self.system.search_expert_knowledge(query, n_results=3) 
         self.assertEqual(result, expected_joined_docs)
         self.mock_expert_collection.query.assert_called_once_with(query_texts=[query], n_results=3)
+
+        # Test with n_results from config (mock_expert_collection.query needs reset)
+        self.mock_expert_collection.query.reset_mock()
+        self.mock_expert_collection.query.return_value = mock_response
+        result_config_n_results = self.system.search_expert_knowledge(query)
+        self.assertEqual(result_config_n_results, expected_joined_docs)
+        self.mock_expert_collection.query.assert_called_once_with(query_texts=[query], n_results=self.system.config['chromadb']['default_n_results'])
+
 
     def test_search_expert_knowledge_no_documents_in_results(self):
         query = "another query"
@@ -130,19 +215,19 @@ class TestRecursiveInterviewSystem(unittest.TestCase):
         question = "Test Question"
         response_text = "Test Response"
         mock_llm_output = "Score: 3\nRationale: This is a profound answer."
-        self.mock_ollama_client.generate.return_value = {'response': mock_llm_output}
+        self.mock_ollama_client_instance.generate.return_value = {'response': mock_llm_output}
         
         score, rationale = self.system.evaluate_response_depth(question, response_text)
         
         self.assertEqual(score, 3)
         self.assertEqual(rationale, "This is a profound answer.")
-        self.mock_ollama_client.generate.assert_called_once()
+        self.mock_ollama_client_instance.generate.assert_called_once()
 
     def test_evaluate_response_depth_valid_score1_and_rationale_case_insensitive(self):
         question = "Test Question"
         response_text = "Test Response"
         mock_llm_output = "score: 1\nrationale: Surface level."
-        self.mock_ollama_client.generate.return_value = {'response': mock_llm_output}
+        self.mock_ollama_client_instance.generate.return_value = {'response': mock_llm_output}
         
         score, rationale = self.system.evaluate_response_depth(question, response_text)
         
@@ -153,42 +238,43 @@ class TestRecursiveInterviewSystem(unittest.TestCase):
         question = "Test Question"
         response_text = "Test Response"
         mock_llm_output = "Score: 2"
-        self.mock_ollama_client.generate.return_value = {'response': mock_llm_output}
+        self.mock_ollama_client_instance.generate.return_value = {'response': mock_llm_output}
         
         score, rationale = self.system.evaluate_response_depth(question, response_text)
         
         self.assertEqual(score, 2)
-        self.assertEqual(rationale, "Rationale not clearly articulated by evaluator.")
+        self.assertEqual(rationale, self.system.config['prompts']['evaluation']['rationale_not_articulated'])
 
     def test_evaluate_response_depth_malformed_output(self):
         question = "Test Question"
         response_text = "Test Response"
         mock_llm_output = "This is completely invalid output."
-        self.mock_ollama_client.generate.return_value = {'response': mock_llm_output}
+        self.mock_ollama_client_instance.generate.return_value = {'response': mock_llm_output}
         
         score, rationale = self.system.evaluate_response_depth(question, response_text)
         
         self.assertEqual(score, 2)
-        self.assertTrue("Default score due to parsing error." in rationale)
-        self.assertTrue(f"Raw output: '{mock_llm_output[:100]}...'" in rationale)
+        expected_rationale_prefix = self.system.config['prompts']['evaluation']['rationale_parsing_error_prefix']
+        self.assertTrue(rationale.startswith(expected_rationale_prefix))
+        self.assertTrue(f"'{mock_llm_output[:100]}...'" in rationale)
 
 
     def test_evaluate_response_depth_just_a_number(self):
         question = "Test Question"
         response_text = "Test Response"
         mock_llm_output = "1" # LLM returns just a number
-        self.mock_ollama_client.generate.return_value = {'response': mock_llm_output}
+        self.mock_ollama_client_instance.generate.return_value = {'response': mock_llm_output}
         
         score, rationale = self.system.evaluate_response_depth(question, response_text)
         
         self.assertEqual(score, 1)
-        self.assertEqual(rationale, "No rationale provided (single number response).")
+        self.assertEqual(rationale, self.system.config['prompts']['evaluation']['rationale_no_rationale_provided'])
 
     def test_evaluate_response_depth_score_and_rationale_with_extra_text(self):
         question = "Test Question"
         response_text = "Test Response"
         mock_llm_output = "Okay, I've evaluated. Score: 2\nRationale: It's okay, but not great. Some more details here."
-        self.mock_ollama_client.generate.return_value = {'response': mock_llm_output}
+        self.mock_ollama_client_instance.generate.return_value = {'response': mock_llm_output}
         
         score, rationale = self.system.evaluate_response_depth(question, response_text)
         
@@ -198,12 +284,13 @@ class TestRecursiveInterviewSystem(unittest.TestCase):
     def test_evaluate_response_depth_exception_during_llm_call(self):
         question = "Test Question"
         response_text = "Test Response"
-        self.mock_ollama_client.generate.side_effect = Exception("LLM unavailable")
+        self.mock_ollama_client_instance.generate.side_effect = Exception("LLM unavailable")
 
         score, rationale = self.system.evaluate_response_depth(question, response_text)
         
         self.assertEqual(score, 2) # Default score
-        self.assertTrue("Default score due to exception during parsing" in rationale)
+        expected_rationale_prefix = self.system.config['prompts']['evaluation']['rationale_exception_prefix']
+        self.assertTrue(rationale.startswith(expected_rationale_prefix))
         self.assertTrue("LLM unavailable" in rationale) # Check if the exception message is in the rationale
 
 if __name__ == '__main__':

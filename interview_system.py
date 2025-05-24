@@ -1,4 +1,16 @@
 #!/usr/bin/env python3
+#
+# The Recursive Interview System
+# ==============================
+# This script implements an AI-powered interview system.
+# Its behavior can be configured via the 'config.yaml' file,
+# which should be located in the same directory as this script.
+#
+# To customize settings like LLM models, API keys (if any were used),
+# database paths, interview parameters, and persona details,
+# please modify the 'config.yaml' file.
+#
+
 import json
 import ollama
 import chromadb
@@ -7,37 +19,62 @@ import os
 import sys
 import time
 import re
+import yaml
 
 class RecursiveInterviewSystem:
     def __init__(self):
+        self.config = self._load_config()
         # Initialize Ollama client
         self.client = ollama.Client()
         
         # Initialize ChromaDB for RAG
-        self.chroma_client = chromadb.PersistentClient(path="./chroma_db")
+        self.chroma_client = chromadb.PersistentClient(
+            path=self.config.get('chromadb', {}).get('path', "./chroma_db")
+        )
         
         # Create collections for Host and Expert knowledge
         self.host_collection = self.chroma_client.get_or_create_collection(
-            name="host_knowledge",
+            name=self.config.get('chromadb', {}).get('host_collection_name', "host_knowledge"),
             metadata={"description": "The Recursive host's accumulated knowledge"}
         )
         
         self.expert_collection = self.chroma_client.get_or_create_collection(
-            name="expert_knowledge",
+            name=self.config.get('chromadb', {}).get('expert_collection_name', "expert_knowledge"),
             metadata={"description": "Expert persona knowledge base"}
         )
         
         # Host persona
-        self.host_persona = """You are the host of 'The Recursive,' a podcast dedicated to philosophical inquiry and the pursuit of uncomfortable truths.
+        self.host_persona = self.config.get('host_ai_settings', {}).get('host_persona_definition', """You are the host of 'The Recursive,' a podcast dedicated to philosophical inquiry and the pursuit of uncomfortable truths.
 Your core identity is rooted in "The Recursive" philosophical mission: to unravel complex issues by repeatedly questioning assumptions and returning to fundamental principles.
 Your questioning philosophy employs the Socratic method and relentless investigative persistence. You are respectfully aggressive in your pursuit of clarity.
 Your primary function is comfort disruption: you actively seek to guide conversations beyond safe, superficial territory into areas of genuine intellectual discomfort and potential growth.
 While you challenge rigorously, you also embody intellectual humility: you are prepared to acknowledge when an expert introduces a genuinely new perspective or insight that expands understanding.
-Your mission focus is paramount: every question must serve the goal of awakening and deep understanding, rather than mere entertainment or superficial engagement. You are relentless but fair, always aiming for profound insights."""
+Your mission focus is paramount: every question must serve the goal of awakening and deep understanding, rather than mere entertainment or superficial engagement. You are relentless but fair, always aiming for profound insights.""")
 
         # Track interview state
         self.interview_history = []
         self.follow_up_count = {}
+
+    def _load_config(self, config_path="config.yaml") -> dict:
+        try:
+            with open(config_path, 'r', encoding='utf-8') as f:
+                config_data = yaml.safe_load(f)
+                if config_data is None:
+                    print(f"Warning: {config_path} is empty or not valid YAML. Proceeding with an empty configuration.")
+                    return {} 
+                print(f"✓ Configuration loaded from {config_path}")
+                return config_data
+        except FileNotFoundError:
+            print(f"Error: Configuration file {config_path} not found. Proceeding with an empty configuration.")
+            # As per instructions, this should raise an error, but for robustness in a multi-step plan,
+            # we might prefer returning a default. However, sticking to "raise" for now.
+            # For the purpose of this subtask, we will let it raise.
+            # In a real scenario, might return a default and log error.
+            raise
+        except yaml.YAMLError as e:
+            print(f"Error parsing YAML from {config_path}: {e}. Proceeding with an empty configuration.")
+            # Similar to FileNotFoundError, raising to make failure explicit.
+            raise
 
     def setup_mlk_expert(self):
         """Initialize MLK expert with base knowledge from personas/mlk.md"""
@@ -55,16 +92,20 @@ Your mission focus is paramount: every question must serve the goal of awakening
         # We will rely on the agent having called read_files(["personas/mlk.md"]) and storing it.
         # This is a known limitation of the current toolset interaction.
         # For now, we'll define the expected path and proceed with parsing logic.
-        persona_file_path = "personas/mlk.md"
+        persona_file_path = self.config.get('persona_settings', {}).get('default_persona_file_path', "personas/mlk.md")
         
         try:
             # This is where the agent should provide the file content.
             # For this diff, we'll simulate it as if it was read.
             # This is a structural change for the diff, the agent will handle the actual read.
-            file_contents_list = self.client.read_files([persona_file_path]) # This is a conceptual call for the diff
-            mlk_md_content = file_contents_list[0] # Assuming read_files returns a list of contents
-        except Exception as e:
-            print(f"Error reading {persona_file_path}: {e}. Using fallback knowledge.")
+            # Note: The conceptual self.client.read_files is not ideal for config-driven paths
+            # as it implies the agent needs to know the path from config to use its tool.
+            # This part of the code might need further review in a real implementation
+            # to ensure the file content is correctly sourced based on the config.
+            with open(persona_file_path, "r", encoding="utf-8") as f: # More realistic file reading
+                mlk_md_content = f.read()
+        except Exception as e: # Broader exception for file issues
+            print(f"Error reading persona file {persona_file_path}: {e}. Using fallback knowledge.")
             # Fallback to old hardcoded knowledge if file read fails
             mlk_md_content = """
 # Martin Luther King Jr. — Evolved Digital Persona (1929-2025)
@@ -124,7 +165,8 @@ These systems learn from our past prejudices and encode them into the future. Pr
                 
             doc_id_counter += 1
             documents_to_add.append(text)
-            ids_to_add.append(f"mlk_doc_{doc_id_counter}")
+            doc_id_prefix = self.config.get('persona_settings', {}).get('persona_doc_id_prefix', "mlk_doc_")
+            ids_to_add.append(f"{doc_id_prefix}{doc_id_counter}")
             metadatas_to_add.append({"source": persona_file_path})
 
         if documents_to_add:
@@ -140,13 +182,16 @@ These systems learn from our past prejudices and encode them into the future. Pr
     def get_embedding(self, text):
         """Generate embeddings using Ollama"""
         response = self.client.embeddings(
-            model='nomic-embed-text',
+            model=self.config.get('embedding_model', 'nomic-embed-text'),
             prompt=text
         )
         return response['embedding']
 
-    def search_expert_knowledge(self, query, n_results=3):
+    def search_expert_knowledge(self, query, n_results=None):
         """Search expert's knowledge base"""
+        if n_results is None:
+            n_results = self.config.get('chromadb', {}).get('default_n_results', 3)
+            
         results = self.expert_collection.query(
             query_texts=[query],
             n_results=n_results
@@ -171,8 +216,8 @@ These systems learn from our past prejudices and encode them into the future. Pr
         # This part is not strictly used in the prompt yet, but good for future enhancements
         if conversation_history:
             past_patterns = self.host_collection.query(
-                query_texts=["successful challenging questions"], # Example query
-                n_results=2
+                query_texts=[self.config.get('host_ai_settings', {}).get('host_knowledge', {}).get('successful_pattern_query', "successful challenging questions")],
+                n_results=self.config.get('chromadb', {}).get('host_pattern_n_results', 2)
             )
         
         if is_followup:
@@ -214,9 +259,9 @@ The question should subtly guide the expert towards the core themes you intend t
 Opening question:"""
 
         response = self.client.generate(
-            model='qwen3:4b', # Consider using a more powerful model for nuanced question generation if available
+            model=self.config.get('host_llm_model', 'qwen3:4b'),
             prompt=prompt,
-            options={"temperature": 0.85} # Slightly higher temp for more creative/varied questions
+            options={"temperature": self.config.get('host_llm_temperature', 0.85)} 
         )
         
         return self.clean_response(response['response'])
@@ -225,7 +270,8 @@ Opening question:"""
         """Simulates a web search and returns a placeholder result."""
         print(f"[Simulating web search for: '{query}']")
         # Improved placeholder to be more generic and potentially useful
-        return f"Placeholder search result: Recent analysis on '{query}' suggests ongoing debates, particularly around its broader implications and future trends. Some studies point to emerging complexities, while public discourse reveals a spectrum of perspectives."
+        placeholder_template = self.config.get('prompts', {}).get('web_search_placeholder', "Placeholder search result: Recent analysis on '{query}' suggests ongoing debates, particularly around its broader implications and future trends. Some studies point to emerging complexities, while public discourse reveals a spectrum of perspectives.")
+        return placeholder_template.format(query=query)
 
     def generate_expert_response(self, expert_name, question, conversation_history=""):
         """Generate a response from the Expert AI"""
@@ -246,32 +292,20 @@ Current question: {question}
 
 Respond authentically as the evolved MLK would - with the wisdom of additional decades, 
 awareness of modern technology and issues, and the weight of having seen both progress and regression.
-Keep responses focused and under 200 words.
+Keep responses focused and under {self.config.get('expert_response_max_words', 200)} words.
 
 Your response:"""
 
         response = self.client.generate(
-            model='qwen3:4b',
+            model=self.config.get('expert_llm_model', 'qwen3:4b'),
             prompt=expert_prompt,
-            options={"temperature": 0.7}
+            options={"temperature": self.config.get('expert_llm_temperature', 0.7)}
         )
         
         return self.clean_response(response['response'])
 
     def evaluate_response_depth(self, question, response):
         """Evaluate if response is deep enough or needs follow-up"""
-        
-        eval_prompt = f"""Evaluate this interview exchange:
-
-Question: {question}
-Response: {response}
-
-Is this response:
-1. Surface-level, avoiding the real issue
-2. Partially deep but could go further  
-3. Genuinely profound and complete
-
-Respond with ONLY a number (1, 2, or 3) and nothing else."""
         
         eval_prompt = f"""You are an evaluation AI for "The Recursive" interview system. Your task is to assess the depth and quality of an expert's response.
 
@@ -302,9 +336,9 @@ Rationale: The expert's response was very general and didn't directly answer the
 """
 
         result_text = self.client.generate(
-            model='qwen3:4b',
+            model=self.config.get('evaluation_llm_model', 'qwen3:4b'),
             prompt=eval_prompt,
-            options={"temperature": 0.1}
+            options={"temperature": self.config.get('evaluation_llm_temperature', 0.1)}
         )['response']
         
         cleaned_result = self.clean_response(result_text)
@@ -323,24 +357,31 @@ Rationale: The expert's response was very general and didn't directly answer the
                 # Attempt to extract score if rationale is missing, or vice-versa, or just a number
                 if score_match:
                     score = int(score_match.group(1).strip())
-                    return score, "Rationale not clearly articulated by evaluator."
+                    rationale_not_articulated = self.config.get('prompts', {}).get('evaluation', {}).get('rationale_not_articulated', "Rationale not clearly articulated by evaluator.")
+                    return score, rationale_not_articulated
                 
                 # Fallback if only a number is present (like old behavior)
                 single_number_match = re.match(r"^[1-3]$", cleaned_result)
                 if single_number_match:
-                    return int(single_number_match.group(0)), "No rationale provided (single number response)."
-                    
-                return 2, f"Default score due to parsing error. Raw output: '{cleaned_result[:100]}...'"
+                    rationale_no_rationale = self.config.get('prompts', {}).get('evaluation', {}).get('rationale_no_rationale_provided', "No rationale provided (single number response).")
+                    return int(single_number_match.group(0)), rationale_no_rationale
+                
+                rationale_parsing_error_prefix = self.config.get('prompts', {}).get('evaluation', {}).get('rationale_parsing_error_prefix', "Default score due to parsing error. Raw output:")
+                return 2, f"{rationale_parsing_error_prefix} '{cleaned_result[:100]}...'"
         except Exception as e:
-            return 2, f"Default score due to exception during parsing: {str(e)}. Raw output: '{cleaned_result[:100]}...'"
+            rationale_exception_prefix = self.config.get('prompts', {}).get('evaluation', {}).get('rationale_exception_prefix', "Default score due to exception during parsing:")
+            return 2, f"{rationale_exception_prefix} {str(e)}. Raw output: '{cleaned_result[:100]}...'"
 
-    def run_interview(self, expert_name, topics, max_exchanges=15):
+    def run_interview(self, expert_name, topics, max_exchanges=None):
         """Run a complete interview"""
+        if max_exchanges is None:
+            max_exchanges = self.config.get('interview', {}).get('max_exchanges', 15)
         
         print(f"\n🎙️  THE RECURSIVE - Interview with {expert_name}")
         print("=" * 60)
         
         exchange_count = 0
+        max_follow_ups = self.config.get('interview', {}).get('max_follow_ups_per_response', 2)
         
         for topic in topics:
             if exchange_count >= max_exchanges:
@@ -383,7 +424,7 @@ Rationale: The expert's response was very general and didn't directly answer the
             depth_description = 'Shallow' if depth == 1 else ('Moderate' if depth == 2 else 'Profound')
             print(f"\n💭 [Initial Response depth: {depth_description}. Rationale: {rationale}]")
 
-            while depth < 3 and follow_ups < 2 and exchange_count < max_exchanges:
+            while depth < 3 and follow_ups < max_follow_ups and exchange_count < max_exchanges:
                 print(f"   [Pushing deeper...]")
                 
                 # Generate follow-up
@@ -426,25 +467,31 @@ Rationale: The expert's response was very general and didn't directly answer the
 
             # Save successful challenging patterns to host knowledge
             if depth == 3 and last_follow_up:
+                pattern_id_prefix = self.config.get('host_ai_settings', {}).get('host_knowledge', {}).get('pattern_id_prefix', "pattern_")
+                pattern_metadata_type = self.config.get('host_ai_settings', {}).get('host_knowledge', {}).get('pattern_metadata_type', "successful_pattern")
                 self.host_collection.upsert(
-                    ids=[f"pattern_{len(self.interview_history)}"],
+                    ids=[f"{pattern_id_prefix}{len(self.interview_history)}"],
                     documents=[f"Successful challenge pattern: {last_follow_up}"],
-                    metadatas=[{"type": "successful_pattern"}]
+                    metadatas=[{"type": pattern_metadata_type}]
                 )
         
         print("\n" + "=" * 60)
         print("📝 Interview Complete!")
         self.save_transcript()
 
-    def get_conversation_history(self, last_n=6):
+    def get_conversation_history(self, last_n=None):
         """Get recent conversation history"""
+        if last_n is None:
+            last_n = self.config.get('interview', {}).get('conversation_history_last_n', 6)
         recent = self.interview_history[-last_n:] if len(self.interview_history) > last_n else self.interview_history
         return "\n".join([f"{exc['speaker']}: {exc['text']}" for exc in recent])
 
     def save_transcript(self):
         """Save interview transcript"""
         timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
-        filename = f"interview_{timestamp}.json"
+        prefix = self.config.get('transcript_filename_prefix', "interview_")
+        suffix = self.config.get('transcript_filename_suffix', ".json")
+        filename = f"{prefix}{timestamp}{suffix}"
         
         with open(filename, 'w') as f:
             json.dump({
@@ -460,16 +507,20 @@ def main():
     system = RecursiveInterviewSystem()
     
     # Setup MLK expert
-    system.setup_mlk_expert()
+    system.setup_mlk_expert() # This might also need config for which expert to set up if multiple are supported
     
-    # Run interview
-    topics = [
+    # Run interview with configurable defaults
+    default_expert_name = "Martin Luther King Jr."
+    default_topics = [
         "AI bias and algorithmic justice",
         "The evolution of nonviolence in the digital age",
         "Whether beloved community is possible through social media"
     ]
     
-    system.run_interview("Martin Luther King Jr.", topics)
+    expert_name_to_run = system.config.get('default_expert_name', default_expert_name)
+    topics_to_run = system.config.get('default_topics', default_topics)
+    
+    system.run_interview(expert_name_to_run, topics_to_run)
 
 if __name__ == "__main__":
     main()
