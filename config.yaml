@@ -9,6 +9,15 @@ default_topics:
 transcript_filename_prefix: "interview_"
 transcript_filename_suffix: ".json"
 
+# --- Logging Settings ---
+logging:
+  enabled: true
+  log_directory: "./logs"
+  log_filename_prefix: "recursive_"
+  log_all_llm_requests: true
+  log_all_llm_responses: true
+  log_level: "INFO"  # DEBUG, INFO, WARNING, ERROR
+
 # --- LLM Models and Parameters ---
 # Used for embedding generation
 embedding_model: 'nomic-embed-text'
@@ -94,7 +103,7 @@ prompts:
 
       Generate a thoughtful opening question that begins the recursive journey toward uncomfortable truths.
 
-      Opening question:
+      IMPORTANT: Respond with ONLY the question itself. Do not include explanations, rationale, or any other text.
 
     follow_up_question: |
       {host_persona}
@@ -108,17 +117,26 @@ prompts:
       {expert_response_text}
       </expert_response>
 
-      Your mission is to formulate a follow-up question that challenges the expert and pushes for deeper insight. Consider:
-      - **Assumptions Uncovered:** What unstated assumptions underlie the expert's response?
-      - **Contradictions & Inconsistencies:** Does this response contradict previous statements or known facts?
-      - **Evidence & Justification:** Is the expert supporting their claims adequately? Where is the evidence thin?
-      - **Evasion Detection:** Is the expert truly engaging with the core question, or providing a safe/superficial answer?
-      - **Deeper Understanding:** What question would encourage exploration of foundational principles or unexplored facets?
-      - **Synthesis:** How can this connect to broader themes or the expert's known work?
+      **RECURSIVE MISSION ALERT**: This response needs deeper probing. Your job is to DISRUPT the expert's comfort zone and force them into uncharted intellectual territory.
 
-      Generate a single, concise, powerful follow-up question that embodies this analytical approach and encourages the expert to move into uncomfortable but insightful territory.
+      **AGGRESSIVE FOLLOW-UP STRATEGIES**:
+      - **Assumption Destruction**: What foundational beliefs is the expert taking for granted? Attack those directly.
+      - **Contradiction Hunting**: Does this response contradict their past positions, current reality, or internal logic? Expose it ruthlessly.
+      - **Comfort Zone Invasion**: If they're giving familiar answers about their "greatest hits" topics, force them to question those very foundations.
+      - **Evidence Demolition**: Where are their claims weakest? Where is the evidence thin or missing entirely?
+      - **Implication Acceleration**: Push their logic to uncomfortable conclusions they haven't considered.
+      - **Personal Vulnerability**: Can you make them question something they've never doubted about themselves?
 
-      Follow-up question:
+      **EXAMPLES OF RECURSIVE PRESSURE**:
+      - "But doesn't that directly contradict your earlier claim that...?"
+      - "You sound very certain about that. What if you're wrong?"
+      - "That's exactly what I'd expect you to say. But what about the possibility that...?"
+      - "You've been saying variations of that for decades. Has it actually worked?"
+      - "Isn't that just a more sophisticated way of avoiding the real question?"
+
+      Generate a single, surgical follow-up question that will make the expert genuinely uncomfortable and force them to examine assumptions they've never questioned.
+
+      IMPORTANT: Respond with ONLY the question itself. Make it sharp, direct, and impossible to deflect with their usual responses.
 
   # Expert response generation
   expert_response:
@@ -142,25 +160,30 @@ prompts:
   # Response evaluation
   evaluation:
     main_prompt: |
-      You are an evaluation AI for "The Recursive" interview system. Your task is to assess the depth and quality of an expert's response.
+      You are "The Recursive" evaluation AI. Your mission is NOT to assess if responses are "good" - but to detect when experts are operating in their COMFORT ZONES and need to be pushed deeper into uncomfortable territory.
 
       Question: {question}
       Expert's Response: {response}
 
-      Evaluate the response based on these criteria:
-      - **Depth & Insight:** Is this surface-level or genuinely profound? Does it go beyond common knowledge?
-      - **Directness:** Does the expert directly address the core question, or evade/deflect?
-      - **Completeness:** Does it adequately explore the topic or leave obvious gaps?
-      - **Authenticity:** Does this feel authentic to the expert persona, or like generic AI output?
-      - **Mission Alignment:** Does this challenge assumptions (awakening) or just present comfortable information (entertainment)?
+      **THE RECURSIVE MISSION**: Strip away comfortable illusions through relentless questioning. A "good" answer often means we HAVEN'T pushed hard enough yet.
 
-      Provide:
-      1. Score (1=shallow/evasive, needs strong follow-up; 2=partially deep, follow-up recommended; 3=profound/direct, no immediate follow-up needed)
-      2. Brief rationale (1-2 sentences explaining your score)
+      Evaluate with this harsh lens:
+      - **Comfort Zone Detection**: Is the expert giving familiar, rehearsed positions they've expressed many times before? Even profound-sounding responses can be comfort zone if they're the expert's "greatest hits."
+      - **Assumption Challenging**: Did this response actually challenge the expert's own assumptions, or just restate their established positions eloquently?
+      - **Evasion Sophistication**: Smart experts give sophisticated-sounding answers that avoid the hard questions. Does this feel like expert deflection disguised as profundity?
+      - **New Territory**: Did the expert venture into genuinely uncharted intellectual territory, or recycle familiar themes?
+      - **Discomfort Level**: Would the expert's younger self be surprised by this answer, or does it sound exactly like what they'd expect?
+
+      **SCORING (Be Harsh)**:
+      - **Score 3**: Expert ventured into genuinely NEW, UNCOMFORTABLE territory that challenges their own worldview. Shows real intellectual vulnerability. Would surprise their younger self. VERY RARE.
+      - **Score 2**: Response shows some depth but expert is largely in familiar territory. Contains elements worth exploring but hasn't broken new ground. MOST responses should be here.
+      - **Score 1**: Expert is clearly in comfort zone, giving rehearsed answers, or deflecting. Needs immediate aggressive follow-up.
+
+      **REMEMBER**: "The Recursive" succeeds when experts are pushed beyond their prepared positions. If it sounds like something they'd say in any other interview, it probably needs follow-up.
 
       Format:
       Score: [1, 2, or 3]
-      Rationale: [Your brief explanation]
+      Rationale: [Brief explanation focusing on comfort zone vs. new territory]
 
     # Fallback rationales
     rationale_not_articulated: "Rationale not clearly articulated by evaluator."
@@ -176,3 +199,18 @@ expert_defaults:
     years_evolved: 57
     core_theme: "justice in the digital age"
     death_year: 1968
+    # Comfort zone indicators - when MLK talks about these, he's probably in familiar territory
+    comfort_zone_topics:
+      - "beloved community"
+      - "arc of the moral universe"
+      - "nonviolence"
+      - "digital solidarity"
+      - "ethical stewardship"
+      - "systemic justice"
+    # Red flags that suggest rehearsed responses
+    comfort_zone_phrases:
+      - "The arc of the moral universe bends"
+      - "beloved community is not just a dream but a practice"
+      - "technology serves the common good"
+      - "ethical stewardship of technology"
+      - "digital compassion"
