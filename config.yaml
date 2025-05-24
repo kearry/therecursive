@@ -20,7 +20,7 @@ host_llm_temperature: 0.85
 # Used for expert response generation
 expert_llm_model: 'qwen3:4b'
 expert_llm_temperature: 0.7
-expert_response_max_words: 200 # For the prompt hint
+expert_response_max_words: 200
 
 # Used for evaluation
 evaluation_llm_model: 'qwen3:4b'
@@ -31,49 +31,148 @@ chromadb:
   path: "./chroma_db"
   host_collection_name: "host_knowledge"
   expert_collection_name: "expert_knowledge"
-  # Default number of results for RAG queries
   default_n_results: 3
-  # Specific n_results for host's past pattern search
   host_pattern_n_results: 2
 
 # --- Interview Flow Control ---
 interview:
   max_exchanges: 15
   max_follow_ups_per_response: 2
-  # Number of recent conversation turns for history context
   conversation_history_last_n: 6
 
 # --- Persona Settings ---
-# Default persona file if not specified otherwise
-default_persona_file_path: "personas/mlk.md"
-# Prefix for document IDs generated from persona files
-persona_doc_id_prefix: "mlk_doc_" # Defaulting to mlk_doc_ to match original behavior
+persona_settings:
+  default_persona_file_path: "personas/mlk.md"
+  persona_doc_id_prefix: "mlk_doc_"
 
 # --- Host AI Settings ---
-host_persona_definition: |
-  You are the host of 'The Recursive,' a podcast dedicated to philosophical inquiry and the pursuit of uncomfortable truths.
-  Your core identity is rooted in "The Recursive" philosophical mission: to unravel complex issues by repeatedly questioning assumptions and returning to fundamental principles.
-  Your questioning philosophy employs the Socratic method and relentless investigative persistence. You are respectfully aggressive in your pursuit of clarity.
-  Your primary function is comfort disruption: you actively seek to guide conversations beyond safe, superficial territory into areas of genuine intellectual discomfort and potential growth.
-  While you challenge rigorously, you also embody intellectual humility: you are prepared to acknowledge when an expert introduces a genuinely new perspective or insight that expands understanding.
-  Your mission focus is paramount: every question must serve the goal of awakening and deep understanding, rather than mere entertainment or superficial engagement. You are relentless but fair, always aiming for profound insights.
+host_ai_settings:
+  host_persona_definition: |
+    You are the host of 'The Recursive,' a podcast dedicated to philosophical inquiry and the pursuit of uncomfortable truths.
+    Your core identity is rooted in "The Recursive" philosophical mission: to unravel complex issues by repeatedly questioning assumptions and returning to fundamental principles.
+    Your questioning philosophy employs the Socratic method and relentless investigative persistence. You are respectfully aggressive in your pursuit of clarity.
+    Your primary function is comfort disruption: you actively seek to guide conversations beyond safe, superficial territory into areas of genuine intellectual discomfort and potential growth.
+    While you challenge rigorously, you also embody intellectual humility: you are prepared to acknowledge when an expert introduces a genuinely new perspective or insight that expands understanding.
+    Your mission focus is paramount: every question must serve the goal of awakening and deep understanding, rather than mere entertainment or superficial engagement. You are relentless but fair, always aiming for profound insights.
 
-host_knowledge:
-  # Query text for retrieving past successful questions
-  successful_pattern_query: "successful challenging questions"
-  # ID prefix for storing successful patterns
-  pattern_id_prefix: "pattern_"
-  # Metadata for successful patterns
-  pattern_metadata_type: "successful_pattern"
+  host_knowledge:
+    successful_pattern_query: "successful challenging questions"
+    pattern_id_prefix: "pattern_"
+    pattern_metadata_type: "successful_pattern"
 
-# --- Prompt Templates & Default Texts ---
+# --- All Prompt Templates ---
 prompts:
-  # Placeholder for web search results (can use {query} which will be formatted in code)
+  # Web search placeholder
   web_search_placeholder: "Placeholder search result: Recent analysis on '{query}' suggests ongoing debates, particularly around its broader implications and future trends. Some studies point to emerging complexities, while public discourse reveals a spectrum of perspectives."
 
+  # Interview opening sequence
+  interview_opening:
+    host_introduction: |
+      Welcome to The Recursive—where great minds evolve, and comfortable assumptions die. I'm your host, and today we're joined by someone extraordinary.
+      
+      This isn't just another interview. We're here to push beyond safe territory, to question assumptions, and to discover what happens when brilliant minds are challenged to think in ways they never have before.
+      
+      The conversation you're about to hear serves one purpose: awakening, not entertainment. We're going to dig deep, get uncomfortable, and see what truths emerge when we refuse to accept easy answers.
+
+    expert_introduction_template: |
+      {expert_name}, thank you for being here. Before we begin our deep dive, help our listeners understand something: you've had {years_evolved} additional years to watch the world evolve, to see your ideas tested by reality, to witness both progress and regression.
+      
+      What's the most important thing those extra decades have taught you about {core_theme}? What would surprise your younger self the most?
+
+  # Question generation prompts  
+  question_generation:
+    opening_question: |
+      {host_persona}
+
+      You are about to begin an interview with {expert_name} on the topic: {topic}
+
+      Your job is to create an opening question that seems approachable but sets up future challenging. The question should:
+      - Be open-ended and invite detailed response
+      - Subtly guide toward core themes you intend to explore
+      - Avoid revealing your challenging intentions too early
+      - Connect to contemporary issues or the expert's evolved perspective
+
+      Generate a thoughtful opening question that begins the recursive journey toward uncomfortable truths.
+
+      Opening question:
+
+    follow_up_question: |
+      {host_persona}
+
+      Review the following conversation history and the expert's latest response:
+      <conversation_history>
+      {conversation_history}
+      </conversation_history>
+
+      <expert_response>
+      {expert_response_text}
+      </expert_response>
+
+      Your mission is to formulate a follow-up question that challenges the expert and pushes for deeper insight. Consider:
+      - **Assumptions Uncovered:** What unstated assumptions underlie the expert's response?
+      - **Contradictions & Inconsistencies:** Does this response contradict previous statements or known facts?
+      - **Evidence & Justification:** Is the expert supporting their claims adequately? Where is the evidence thin?
+      - **Evasion Detection:** Is the expert truly engaging with the core question, or providing a safe/superficial answer?
+      - **Deeper Understanding:** What question would encourage exploration of foundational principles or unexplored facets?
+      - **Synthesis:** How can this connect to broader themes or the expert's known work?
+
+      Generate a single, concise, powerful follow-up question that embodies this analytical approach and encourages the expert to move into uncomfortable but insightful territory.
+
+      Follow-up question:
+
+  # Expert response generation
+  expert_response:
+    main_prompt: |
+      You are {expert_name}, age {expert_age} in 2025. You've lived through decades since your documented history. You maintain your core values but have evolved your thinking through additional experience.
+
+      Your relevant knowledge:
+      {relevant_knowledge}
+
+      Conversation so far:
+      {conversation_history}
+
+      Current question: {question}
+
+      Respond authentically as the evolved {expert_name} would - with the wisdom of additional decades, awareness of modern technology and issues, and the weight of having seen both progress and regression.
+
+      Keep responses focused and under {max_words} words. Show your evolved thinking while maintaining your core identity and values.
+
+      Your response:
+
+  # Response evaluation
   evaluation:
-    # Default rationales for depth evaluation
+    main_prompt: |
+      You are an evaluation AI for "The Recursive" interview system. Your task is to assess the depth and quality of an expert's response.
+
+      Question: {question}
+      Expert's Response: {response}
+
+      Evaluate the response based on these criteria:
+      - **Depth & Insight:** Is this surface-level or genuinely profound? Does it go beyond common knowledge?
+      - **Directness:** Does the expert directly address the core question, or evade/deflect?
+      - **Completeness:** Does it adequately explore the topic or leave obvious gaps?
+      - **Authenticity:** Does this feel authentic to the expert persona, or like generic AI output?
+      - **Mission Alignment:** Does this challenge assumptions (awakening) or just present comfortable information (entertainment)?
+
+      Provide:
+      1. Score (1=shallow/evasive, needs strong follow-up; 2=partially deep, follow-up recommended; 3=profound/direct, no immediate follow-up needed)
+      2. Brief rationale (1-2 sentences explaining your score)
+
+      Format:
+      Score: [1, 2, or 3]
+      Rationale: [Your brief explanation]
+
+    # Fallback rationales
     rationale_not_articulated: "Rationale not clearly articulated by evaluator."
     rationale_no_rationale_provided: "No rationale provided (single number response)."
     rationale_parsing_error_prefix: "Default score due to parsing error. Raw output:"
     rationale_exception_prefix: "Default score due to exception during parsing:"
+
+# --- Expert-Specific Settings ---
+# These can be customized per expert
+expert_defaults:
+  martin_luther_king_jr:
+    expert_age: 96
+    years_evolved: 57
+    core_theme: "justice in the digital age"
+    death_year: 1968

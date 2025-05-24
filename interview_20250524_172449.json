@@ -1,0 +1,35 @@
+{
+  "timestamp": "20250524_172449",
+  "interview": [
+    {
+      "speaker": "HOST",
+      "text": "**Opening Question:** \"Can you walk us through a moment when you realized an AI system wasn't just making a decision\u2014but was *reinforcing* a societal pattern you hadn\u2019t noticed before? What does that reveal about the invisible hand of design in shaping our world?\" **Rationale:** This question begins with a relatable, almost mundane scenario (a moment of realization) to create comfort, but quickly shifts to the core tension of algorithmic bias. It invites the expert to reflect on the *subtle* ways AI mirrors societal structures, nudging the conversation toward the interplay between design, power, and justice. The phrase \"invisible hand of design\" subtly hints at the recursive, systemic nature of bias, while the \"moment\" invites a narrative that unpacks the emotional and intellectual discomfort of encountering algorithmic injustice. It\u2019s open-ended, layered, and sets the stage for deeper inquiry into accountability, equity, and the human (or non-human) agency behind code.",
+      "topic": "AI bias and algorithmic justice"
+    },
+    {
+      "speaker": "Martin Luther King Jr.",
+      "text": "In 2025, I see the invisible hand of design in the algorithms that govern our lives. One moment crystallized this for me: a predictive policing algorithm that targeted Black neighborhoods, not because of crime, but because of entrenched poverty and systemic neglect. It was a digital redlining, a mathematical \"Whites Only\" sign, encoded in code. I realized then that AI isn\u2019t just a tool\u2014it\u2019s a mirror, reflecting the biases of those who build it. The designers, like the architects of segregation, shaped systems to serve power, not people. This reveals the depth of our collective complicity. Technology isn\u2019t neutral; it\u2019s a continuation of the same logic that once barred Black Americans from lunch counters. To confront this, we must demand algorithmic beloved community\u2014systems designed for justice, not profit. The challenge is to reframe design as a moral act, where code is a covenant, not a weapon. Let us not merely critique the outcome, but the process\u2014because the future is written in the algorithms we choose to create.",
+      "topic": "AI bias and algorithmic justice"
+    },
+    {
+      "speaker": "HOST",
+      "text": "**Opening Question:** \" How do the tools of the digital age\u2014social media, algorithms, virtual spaces\u2014both support and complicate the practice of nonviolence in ways that challenge traditional understanding?\" This question begins with familiar terrain (digital tools and nonviolence), but subtly introduces a paradox: the same technologies that amplify collective action can also erode the ethical foundations of nonviolence. It invites the expert to explore the tension between virality and restraint, the erosion of physical anonymity, and the redefinition of \"peaceful resistance\" in a world where violence is often mediated through screens. By framing the challenge as one of \"traditional understanding,\" it primes the conversation to interrogate assumptions about nonviolence, its goals, and the moral risks of digital activism. The question is neither confrontational nor overtly provocative, but it is designed to unsettle and provoke deeper inquiry.",
+      "topic": "The evolution of nonviolence in the digital age"
+    },
+    {
+      "speaker": "Martin Luther King Jr.",
+      "text": "In the digital age, nonviolence is both a weapon and a mirror. Social media amplifies our voices, but it also distorts truth, turning empathy into echo chambers. Algorithms, designed to connect, can deepen division, reinforcing biases under the guise of \"personalization.\" Virtual spaces offer anonymity, yet that detachment can numb our moral responsibility. The paradox is this: the tools we use to fight injustice can also become instruments of dehumanization. To practice nonviolence in this world, we must demand digital civil rights\u2014systems that prioritize human dignity over profit. The beloved community is not just a vision but a demand: to use technology as a covenant, not a weapon. We must cultivate digital humility, recognizing that every click, post, and algorithm is a choice. The arc of progress is not inevitable; it must be pulled by those who refuse to let the machine of injustice dominate. Nonviolence in the digital age is not passive\u2014it is an active rebellion against the lie that technology is neutral. Let us build a world where the screen is a bridge, not a barrier.",
+      "topic": "The evolution of nonviolence in the digital age"
+    },
+    {
+      "speaker": "HOST",
+      "text": "**Opening Question:** \"In an age where our online interactions often feel more immediate than in-person ones, how might we assess whether social media could ever truly cultivate a beloved community, given its inherent challenges and our evolving expectations of connection?\" **Rationale:** This question begins with a familiar tension\u2014social media\u2019s speed versus depth\u2014while subtly inviting the expert to grapple with the paradox of connection in a fragmented digital space. It frames the discussion around *assessing* possibility, which opens the door to exploring both the potential of social media to foster unity and the systemic barriers (algorithms, superficiality, or alienation) that may prevent it. By referencing \"evolving expectations,\" it also hints at the need to reexamine what a \"beloved community\" even means in the digital age\u2014a core theme of the podcast. The question avoids binaries (yes/no) and instead invites a nuanced, investigative response, setting the stage for uncomfortable but necessary inquiry.",
+      "topic": "Whether beloved community is possible through social media"
+    },
+    {
+      "speaker": "Martin Luther King Jr.",
+      "text": "In 2025, I see social media as a double-edged sword. It can be a bridge\u2014when we use it to amplify empathy, share stories of struggle, and build solidarity. But it is also a mirror, reflecting our divisions and distorting truth. The challenge is not in the tools, but in our *intent*. A beloved community cannot be cultivated in echo chambers; it requires intentional, radical love that transcends screens. We must demand platforms that prioritize connection over consumption, not just algorithms that profit from outrage. The key is to reframe digital interaction as a moral act\u2014a covenant, not a transaction. Let us not mistake the speed of clicks for the depth of grace. The arc of justice bends toward the beloved community when we choose to use technology as a vessel for unity, not a weapon for division. The future is not written in code, but in the choices we make to love one another in a world that often forgets our interconnectedness. Let us build a digital realm where the screen is a window to the soul, not a barrier to the human.",
+      "topic": "Whether beloved community is possible through social media"
+    }
+  ]
+}
