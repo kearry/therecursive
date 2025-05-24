@@ -1,0 +1,79 @@
+# Main Configuration for The Recursive Interview System
+
+# --- General Settings ---
+default_expert_name: "Martin Luther King Jr."
+default_topics:
+  - "AI bias and algorithmic justice"
+  - "The evolution of nonviolence in the digital age"
+  - "Whether beloved community is possible through social media"
+transcript_filename_prefix: "interview_"
+transcript_filename_suffix: ".json"
+
+# --- LLM Models and Parameters ---
+# Used for embedding generation
+embedding_model: 'nomic-embed-text'
+
+# Used for host question generation
+host_llm_model: 'qwen3:4b'
+host_llm_temperature: 0.85
+
+# Used for expert response generation
+expert_llm_model: 'qwen3:4b'
+expert_llm_temperature: 0.7
+expert_response_max_words: 200 # For the prompt hint
+
+# Used for evaluation
+evaluation_llm_model: 'qwen3:4b'
+evaluation_llm_temperature: 0.1
+
+# --- ChromaDB Settings ---
+chromadb:
+  path: "./chroma_db"
+  host_collection_name: "host_knowledge"
+  expert_collection_name: "expert_knowledge"
+  # Default number of results for RAG queries
+  default_n_results: 3
+  # Specific n_results for host's past pattern search
+  host_pattern_n_results: 2
+
+# --- Interview Flow Control ---
+interview:
+  max_exchanges: 15
+  max_follow_ups_per_response: 2
+  # Number of recent conversation turns for history context
+  conversation_history_last_n: 6
+
+# --- Persona Settings ---
+# Default persona file if not specified otherwise
+default_persona_file_path: "personas/mlk.md"
+# Prefix for document IDs generated from persona files
+persona_doc_id_prefix: "mlk_doc_" # Defaulting to mlk_doc_ to match original behavior
+
+# --- Host AI Settings ---
+host_persona_definition: |
+  You are the host of 'The Recursive,' a podcast dedicated to philosophical inquiry and the pursuit of uncomfortable truths.
+  Your core identity is rooted in "The Recursive" philosophical mission: to unravel complex issues by repeatedly questioning assumptions and returning to fundamental principles.
+  Your questioning philosophy employs the Socratic method and relentless investigative persistence. You are respectfully aggressive in your pursuit of clarity.
+  Your primary function is comfort disruption: you actively seek to guide conversations beyond safe, superficial territory into areas of genuine intellectual discomfort and potential growth.
+  While you challenge rigorously, you also embody intellectual humility: you are prepared to acknowledge when an expert introduces a genuinely new perspective or insight that expands understanding.
+  Your mission focus is paramount: every question must serve the goal of awakening and deep understanding, rather than mere entertainment or superficial engagement. You are relentless but fair, always aiming for profound insights.
+
+host_knowledge:
+  # Query text for retrieving past successful questions
+  successful_pattern_query: "successful challenging questions"
+  # ID prefix for storing successful patterns
+  pattern_id_prefix: "pattern_"
+  # Metadata for successful patterns
+  pattern_metadata_type: "successful_pattern"
+
+# --- Prompt Templates & Default Texts ---
+prompts:
+  # Placeholder for web search results (can use {query} which will be formatted in code)
+  web_search_placeholder: "Placeholder search result: Recent analysis on '{query}' suggests ongoing debates, particularly around its broader implications and future trends. Some studies point to emerging complexities, while public discourse reveals a spectrum of perspectives."
+
+  evaluation:
+    # Default rationales for depth evaluation
+    rationale_not_articulated: "Rationale not clearly articulated by evaluator."
+    rationale_no_rationale_provided: "No rationale provided (single number response)."
+    rationale_parsing_error_prefix: "Default score due to parsing error. Raw output:"
+    rationale_exception_prefix: "Default score due to exception during parsing:"
