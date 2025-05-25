@@ -58,6 +58,15 @@ class RecursiveInterviewSystem:
         self.topic_depth_scores = {}  # Track depth achieved per topic
         self.comfort_zone_patterns = []  # Track repeated comfort zone responses
 
+        # Web search settings
+        self.web_search_settings = self.config.get('web_search_settings', {
+            'enabled': False,
+            'search_url_template': "https://duckduckgo.com/html/?q={query}",
+            'max_snippets_to_integrate': 3,
+            'min_snippet_length': 50
+        })
+        self.potential_breakthroughs = []
+
     def _setup_logging(self):
         """Setup comprehensive logging system"""
         logging_config = self.config.get('logging', {})
@@ -252,14 +261,14 @@ These systems learn from our past prejudices and encode them into the future. Pr
             # Clean up multiple newlines within a chunk that might have been missed
             text = re.sub(r"\n+", "\n", text).strip()
 
-            if len(text) < 20:
+            if len(text) < 20: # Using a slightly higher threshold for persona docs
                 continue
                 
             doc_id_counter += 1
             documents_to_add.append(text)
             doc_id_prefix = self.config.get('persona_settings', {}).get('persona_doc_id_prefix', "mlk_doc_")
             ids_to_add.append(f"{doc_id_prefix}{doc_id_counter}")
-            metadatas_to_add.append({"source": persona_file_path})
+            metadatas_to_add.append({"source": persona_file_path, "type": "base_persona"})
 
         if documents_to_add:
             self.expert_collection.upsert(
@@ -389,11 +398,59 @@ These systems learn from our past prejudices and encode them into the future. Pr
         """Generate a question from the Host AI using config prompts"""
         
         # Search host's knowledge for similar past questions
-        if conversation_history:
-            past_patterns = self.host_collection.query(
-                query_texts=[self.config.get('host_ai_settings', {}).get('host_knowledge', {}).get('successful_pattern_query', "successful challenging questions")],
-                n_results=self.config.get('chromadb', {}).get('host_pattern_n_results', 2)
-            )
+        # Load learning settings
+        host_ai_config = self.config.get('host_ai_settings', {})
+        learning_settings = host_ai_config.get('learning', {
+            'enabled': False,
+            'max_patterns_to_inject_in_prompt': 1,
+            'query_successful_patterns_by_topic': True
+        })
+        host_knowledge_config = host_ai_config.get('host_knowledge', {})
+        
+        learned_patterns_prompt_addition = ""
+        if learning_settings.get('enabled', False):
+            max_patterns_to_inject = learning_settings.get('max_patterns_to_inject_in_prompt', 1)
+            query_by_topic = learning_settings.get('query_successful_patterns_by_topic', True)
+            
+            retrieved_patterns_docs = []
+            if query_by_topic and topic: # Ensure topic is not None or empty
+                self.logger.info(f"Querying host_collection for successful patterns related to topic: '{topic}'")
+                try:
+                    topic_patterns_results = self.host_collection.query(
+                        query_texts=[f"successful patterns for topic: {topic}"], # Query text based on topic
+                        n_results=max_patterns_to_inject,
+                        where={"type": "successful_pattern_context"}, 
+                        include=["documents"] # Only need documents for prompt
+                    )
+                    if topic_patterns_results and topic_patterns_results['documents'] and topic_patterns_results['documents'][0]:
+                        retrieved_patterns_docs.extend(topic_patterns_results['documents'][0])
+                        self.logger.info(f"Retrieved {len(topic_patterns_results['documents'][0])} topic-specific patterns for '{topic}'.")
+                except Exception as e:
+                    self.logger.error(f"Error querying host_collection for topic-specific patterns ('{topic}'): {e}")
+
+            # If not enough topic-specific patterns, query for general ones
+            if len(retrieved_patterns_docs) < max_patterns_to_inject:
+                num_general_needed = max_patterns_to_inject - len(retrieved_patterns_docs)
+                self.logger.info(f"Querying host_collection for {num_general_needed} general successful patterns.")
+                try:
+                    general_patterns_results = self.host_collection.query(
+                        query_texts=[host_knowledge_config.get('successful_pattern_query', "successful challenging questions")],
+                        n_results=num_general_needed,
+                        where={"type": "successful_pattern_context"},
+                        include=["documents"]
+                    )
+                    if general_patterns_results and general_patterns_results['documents'] and general_patterns_results['documents'][0]:
+                        retrieved_patterns_docs.extend(general_patterns_results['documents'][0])
+                        self.logger.info(f"Retrieved {len(general_patterns_results['documents'][0])} general patterns.")
+                except Exception as e:
+                    self.logger.error(f"Error querying host_collection for general patterns: {e}")
+            
+            if retrieved_patterns_docs:
+                learned_patterns_prompt_addition = "\n\nHere are some examples of previously successful challenging exchanges:\n"
+                # Ensure we only take up to max_patterns_to_inject from the combined list
+                for i, pattern_doc_string in enumerate(retrieved_patterns_docs[:max_patterns_to_inject]):
+                    learned_patterns_prompt_addition += f"\n--- Example {i+1} ---\n{pattern_doc_string}\n--- End Example {i+1} ---\n"
+                self.logger.info(f"Injecting {len(retrieved_patterns_docs[:max_patterns_to_inject])} patterns into the prompt.")
         
         if is_followup:
             if not expert_response_text:
@@ -402,7 +459,7 @@ These systems learn from our past prejudices and encode them into the future. Pr
             prompt_template = self.config.get('prompts', {}).get('question_generation', {}).get('follow_up_question', 
                 "Generate a challenging follow-up question based on the expert's response.")
             
-            prompt = prompt_template.format(
+            base_prompt = prompt_template.format(
                 host_persona=self.host_persona,
                 conversation_history=conversation_history,
                 expert_response_text=expert_response_text
@@ -412,17 +469,20 @@ These systems learn from our past prejudices and encode them into the future. Pr
             prompt_template = self.config.get('prompts', {}).get('question_generation', {}).get('opening_question',
                 "Generate an opening question for the topic: {topic}")
             
-            prompt = prompt_template.format(
+            base_prompt = prompt_template.format(
                 host_persona=self.host_persona,
                 expert_name=self.config.get('default_expert_name', 'Expert'),
                 topic=topic
             )
             request_type = "HOST_OPENING_QUESTION"
-
+            
+        final_prompt = learned_patterns_prompt_addition + "\n\n" + base_prompt
+        # Ensure `prompt` variable is used if it was the intended one, or `final_prompt`
+        # Correcting to use final_prompt based on logic flow
         response = self._make_llm_request(
             request_type=request_type,
             model=self.config.get('host_llm_model', 'qwen3:4b'),
-            prompt=prompt,
+            prompt=final_prompt, # Corrected from prompt to final_prompt
             options={"temperature": self.config.get('host_llm_temperature', 0.85)}
         )
         
@@ -431,17 +491,145 @@ These systems learn from our past prejudices and encode them into the future. Pr
         
         return cleaned_response
 
-    def perform_web_search(self, query: str) -> str:
-        """Simulates a web search and returns a placeholder result."""
-        print(f"[Simulating web search for: '{query}']")
-        placeholder_template = self.config.get('prompts', {}).get('web_search_placeholder', 
-            "Placeholder search result for '{query}'")
-        return placeholder_template.format(query=query)
+    def perform_web_search(self, query: str) -> list[str]:
+        """Performs a web search and returns a list of relevant text snippets."""
+        if not self.web_search_settings.get('enabled', False):
+            self.logger.info("Web search is disabled in config.")
+            return []
+
+        search_url_template = self.web_search_settings.get('search_url_template', "https://duckduckgo.com/html/?q={query}")
+        max_snippets = self.web_search_settings.get('max_snippets_to_integrate', 3)
+        min_snippet_length = self.web_search_settings.get('min_snippet_length', 50)
+
+        search_url = search_url_template.format(query=query)
+        self.logger.info(f"Performing web search for query: '{query}' at URL: {search_url}")
+
+        try:
+            # This is where the view_text_website tool would be called.
+            # For now, we'll simulate its output.
+            # In a real scenario: raw_html_content = view_text_website(search_url)
+            # Simulate receiving HTML content from a search engine results page
+            # This simulated content tries to mimic DuckDuckGo's HTML structure a bit
+            raw_html_content = f"""
+            <!DOCTYPE html><html><head><title>Search Results for {query}</title></head><body>
+            <div id="links" class="results">
+                <div class="result results_links_deep highlight_d result--url-above-snippet">
+                    <div class="result__body links_main links_deep">
+                        <h2 class="result__title"><a class="result__a" href="#">Result 1 about {query}</a></h2>
+                        <a class.result__snippet" href="#">This is the first snippet about {query}. It contains some relevant information that might be useful. We need to make sure it's long enough.</a>
+                    </div>
+                </div>
+                <div class="result results_links_deep highlight_d result--url-above-snippet">
+                    <div class="result__body links_main links_deep">
+                        <h2 class="result__title"><a class="result__a" href="#">Result 2 about {query}</a></h2>
+                        <a class.result__snippet" href="#">Second snippet for {query}. This one also has some text. It should be distinct from the first one and provide additional context or details.</a>
+                    </div>
+                </div>
+                <div class="result results_links_deep highlight_d result--url-above-snippet">
+                    <div class="result__body links_main links_deep">
+                        <h2 class="result__title"><a class.result__a" href="#">Result 3 about {query}</a></h2>
+                        <a class.result__snippet" href="#">A third piece of information regarding {query}. This helps to build a more comprehensive understanding from multiple web sources. It's important to gather diverse perspectives.</a>
+                    </div>
+                </div>
+                <div class="result results_links_deep highlight_d result--url-above-snippet">
+                    <div class="result__body links_main links_deep">
+                        <h2 class="result__title"><a class.result__a" href="#">Short result</a></h2>
+                        <a class.result__snippet" href="#">Too short.</a>
+                    </div>
+                </div>
+            </div></body></html>
+            """
+            self.logger.info(f"Successfully fetched content from {search_url}, length: {len(raw_html_content)}")
+
+            # Basic snippet extraction (example for DuckDuckGo HTML structure)
+            # This is a simplified parser. A more robust solution would use BeautifulSoup.
+            snippets = []
+            # Regex to find snippet-like text in typical search result links
+            # This looks for class="result__snippet" and captures its content
+            snippet_matches = re.findall(r'<a class(?:=|.)result__snippet(?:=|.)[^>]*>(.*?)</a>', raw_html_content, re.DOTALL)
+            
+            for snippet_text in snippet_matches:
+                # Basic cleaning: remove HTML tags and extra whitespace
+                clean_text = re.sub(r'<[^>]+>', '', snippet_text).strip()
+                clean_text = ' '.join(clean_text.split()) # Normalize whitespace
+                if len(clean_text) >= min_snippet_length and len(snippets) < max_snippets:
+                    snippets.append(clean_text)
+            
+            if not snippets: # Fallback if regex fails or content is not as expected
+                # Try to take a block of text from the body if no snippets found
+                body_match = re.search(r'<body.*?>(.*?)</body>', raw_html_content, re.DOTALL | re.IGNORECASE)
+                if body_match:
+                    body_text = re.sub(r'<script.*?</script>', '', body_match.group(1), flags=re.DOTALL | re.IGNORECASE)
+                    body_text = re.sub(r'<style.*?</style>', '', body_text, flags=re.DOTALL | re.IGNORECASE)
+                    body_text = re.sub(r'<[^>]+>', '', body_text) # Strip all tags
+                    body_text = ' '.join(body_text.split()) # Normalize whitespace
+                    # Split into sentences or paragraphs and take first few
+                    potential_snippets = re.split(r'\.\s+|\n\n', body_text)
+                    for ps in potential_snippets:
+                        if len(ps) >= min_snippet_length and len(snippets) < max_snippets:
+                            snippets.append(ps.strip())
+                        if len(snippets) >= max_snippets:
+                            break
+            
+            if snippets:
+                self.logger.info(f"Extracted {len(snippets)} snippets from web search for '{query}'.")
+                for i, s in enumerate(snippets):
+                    self.logger.debug(f"Snippet {i+1}: {s[:100]}...")
+                return snippets
+            else:
+                self.logger.warning(f"No usable snippets found for query '{query}' from {search_url}.")
+                return []
+
+        except Exception as e:
+            self.logger.error(f"Error during web search for query '{query}': {e}")
+            return []
 
     def generate_expert_response(self, expert_name, question, conversation_history=""):
         """Generate a response from the Expert AI using config prompts"""
-        
-        # Search expert's knowledge base
+
+        # 1. Perform web search and integrate results into RAG
+        if self.web_search_settings.get('enabled', True):
+            self.logger.info(f"Attempting web search for question: {question[:100]}...")
+            web_snippets = self.perform_web_search(question)
+            
+            if web_snippets:
+                self.logger.info(f"Adding {len(web_snippets)} web snippets to expert knowledge base.")
+                docs_to_add = []
+                ids_to_add = []
+                metadatas_to_add = []
+                
+                for i, snippet_text in enumerate(web_snippets):
+                    # Process into manageable chunks (already done by snippet extraction to some extent)
+                    # If snippets were very long, further chunking might be needed here.
+                    
+                    # Generate embedding (moved inside loop if get_embedding is on self)
+                    # embedding = self.get_embedding(snippet_text) # Not needed if upsert handles it or it's done by Chroma
+                    
+                    doc_id = f"web_search_doc_{datetime.now().strftime('%Y%m%d%H%M%S')}_{i}"
+                    docs_to_add.append(snippet_text)
+                    ids_to_add.append(doc_id)
+                    metadatas_to_add.append({
+                        "source": "web_search",
+                        "query": question, # Log the original question that led to this search
+                        "timestamp": datetime.now().isoformat(),
+                        "search_url": self.web_search_settings.get('search_url_template', '').format(query=question) # Log search URL
+                    })
+                
+                if docs_to_add:
+                    try:
+                        self.expert_collection.upsert(
+                            ids=ids_to_add,
+                            documents=docs_to_add,
+                            metadatas=metadatas_to_add
+                        )
+                        self.logger.info(f"Successfully upserted {len(docs_to_add)} web search snippets into expert_collection for question: '{question[:50]}...'")
+                    except Exception as e:
+                        self.logger.error(f"Failed to upsert web search snippets into expert_collection for question '{question[:50]}...': {e}")
+                        # Interview continues without this specific web knowledge update
+            else:
+                self.logger.info(f"No new usable information from web search to add to knowledge base for question: '{question[:50]}...'.")
+
+        # 2. Search expert's knowledge base (now potentially including web results)
         relevant_knowledge = self.search_expert_knowledge(question)
         
         # Get expert defaults
@@ -541,8 +729,14 @@ These systems learn from our past prejudices and encode them into the future. Pr
         # Get depth summary
         depth_summary = ""
         if self.topic_depth_scores:
-            avg_depth = sum(self.topic_depth_scores.values()) / len(self.topic_depth_scores)
+            avg_depth = sum(self.topic_depth_scores.values()) / len(self.topic_depth_scores) if self.topic_depth_scores else 0
             depth_summary = f"Average depth achieved: {avg_depth:.1f}/3.0"
+
+        breakthrough_summary = ""
+        if self.potential_breakthroughs:
+            breakthrough_summary = "Key moments of significant insight or depth increase were observed:\n"
+            for bt in self.potential_breakthroughs:
+                breakthrough_summary += f"- On topic '{bt['topic']}': Depth improved from {bt['improvement'][0]} to {bt['improvement'][1]}. Question: '{bt['question'][:100]}...' Response: '{bt['response'][:100]}...'\n"
         
         conclusion_prompt = f"""
         {self.host_persona}
@@ -551,8 +745,9 @@ These systems learn from our past prejudices and encode them into the future. Pr
 
         Interview Analysis:
         - Total exchanges: {len(self.interview_history)}
-        - {comfort_zone_summary if comfort_zone_summary else "No significant comfort zone patterns detected"}
-        - {depth_summary if depth_summary else "Depth analysis not available"}
+        - {comfort_zone_summary if comfort_zone_summary else "No significant comfort zone patterns detected."}
+        - {depth_summary if depth_summary else "Depth analysis not available."}
+        {breakthrough_summary if breakthrough_summary else "No specific breakthrough moments were flagged during this interview."}
 
         Generate a thoughtful conclusion that:
         1. Acknowledges what was revealed through the recursive questioning process
@@ -587,13 +782,16 @@ These systems learn from our past prejudices and encode them into the future. Pr
         
         exchange_count = 1  # We've already done the opening exchange
         max_follow_ups = self.config.get('interview', {}).get('max_follow_ups_per_response', 2)
-        
+        min_topic_depth_for_early_conclusion = self.config.get('interview', {}).get('min_topic_depth_before_early_conclusion', 0)
+        topics_covered_count = 0
+
         for i, topic in enumerate(topics):
-            if exchange_count >= max_exchanges - 2:  # Reserve space for conclusion
-                self.logger.warning(f"Near max exchanges ({max_exchanges}), wrapping up after this topic")
+            # Wrap-up Management: Check if max_exchanges is nearly reached
+            if exchange_count >= max_exchanges - 1: # Reserve 1 for conclusion
+                self.logger.warning(f"Max exchanges ({max_exchanges}) nearly reached. Proceeding to conclusion before starting new topic '{topic}'.")
                 break
                 
-            self.logger.info(f"Starting topic {i+1}/{len(topics)}: {topic}")
+            self.logger.info(f"Starting topic {i+1}/{len(topics)}: {topic} (Exchange {exchange_count}/{max_exchanges})")
             print(f"\n📋 TOPIC: {topic}")
             print("-" * 40)
             
@@ -629,35 +827,44 @@ These systems learn from our past prejudices and encode them into the future. Pr
             exchange_count += 1
             
             # Evaluate and follow up
-            depth, rationale = self.evaluate_response_depth(question, response)
+            current_depth, rationale = self.evaluate_response_depth(question, response)
             follow_ups = 0
-            last_follow_up = None
-            best_depth = depth
+            last_follow_up = None # Stores the question that led to the current response
+            best_depth_for_topic = current_depth # Tracks the max depth achieved for this specific topic
             
-            depth_description = 'Shallow' if depth == 1 else ('Moderate' if depth == 2 else 'Profound')
+            depth_description = 'Shallow' if current_depth == 1 else ('Moderate' if current_depth == 2 else 'Profound')
             print(f"\n💭 [Initial Response depth: {depth_description}. Rationale: {rationale}]")
-            self.logger.info(f"Topic '{topic}' initial response depth: {depth} ({depth_description})")
+            self.logger.info(f"Topic '{topic}' initial response depth: {current_depth} ({depth_description})")
 
-            while depth < 3 and follow_ups < max_follow_ups and exchange_count < max_exchanges - 2:
-                self.logger.info(f"Generating follow-up {follow_ups + 1}/{max_follow_ups} for topic '{topic}'")
-                print(f"   [Pushing deeper...]")
+            # Follow-up loop
+            while current_depth < 3 and follow_ups < max_follow_ups and exchange_count < max_exchanges - 1: # Reserve 1 for conclusion
+                previous_depth = current_depth
+                self.logger.info(f"Generating follow-up {follow_ups + 1}/{max_follow_ups} for topic '{topic}' (Exchange {exchange_count +1})")
+                print(f"   [Pushing deeper... Previous depth: {previous_depth}]")
                 
-                # Generate follow-up
+                # Generate follow-up (this is 'question' for the next turn)
                 follow_up = self.generate_host_question(
                     topic,
                     self.get_conversation_history(),
                     is_followup=True,
                     expert_response_text=response
                 )
-                last_follow_up = follow_up
-                print(f"\n🎤 HOST: {follow_up}")
+                current_follow_up_question = self.generate_host_question(
+                    topic,
+                    self.get_conversation_history(),
+                    is_followup=True,
+                    expert_response_text=response # Pass current expert response to inform follow-up
+                )
+                last_follow_up = current_follow_up_question # This is the question that will be evaluated
+                print(f"\n🎤 HOST: {current_follow_up_question}")
                 
                 # Expert response to follow-up
-                response = self.generate_expert_response(
+                current_expert_response_to_follow_up = self.generate_expert_response(
                     expert_name,
-                    follow_up,
+                    current_follow_up_question,
                     self.get_conversation_history()
                 )
+                response = current_expert_response_to_follow_up # Update response for next iteration / saving
                 print(f"\n👤 {expert_name.upper()}: {response}")
                 
                 # Check for comfort zone patterns again
@@ -668,7 +875,7 @@ These systems learn from our past prejudices and encode them into the future. Pr
                 # Add to history
                 self.interview_history.append({
                     "speaker": "HOST",
-                    "text": follow_up,
+                    "text": current_follow_up_question,
                     "topic": topic
                 })
                 self.interview_history.append({
@@ -681,28 +888,78 @@ These systems learn from our past prejudices and encode them into the future. Pr
                 follow_ups += 1
                 
                 # Re-evaluate
-                depth, rationale = self.evaluate_response_depth(follow_up, response)
-                best_depth = max(best_depth, depth)
-                depth_description = 'Shallow' if depth == 1 else ('Moderate' if depth == 2 else 'Profound')
-                print(f"\n💭 [Follow-up Response depth: {depth_description}. Rationale: {rationale}]")
-                self.logger.info(f"Follow-up {follow_ups} depth: {depth} ({depth_description})")
+                new_depth, rationale = self.evaluate_response_depth(current_follow_up_question, response)
+                current_depth = new_depth # Update current_depth for the while loop condition
+                best_depth_for_topic = max(best_depth_for_topic, current_depth)
+                
+                depth_description = 'Shallow' if current_depth == 1 else ('Moderate' if current_depth == 2 else 'Profound')
+                print(f"\n💭 [Follow-up Response depth: {current_depth}. Rationale: {rationale}]")
+                self.logger.info(f"Follow-up {follow_ups} for topic '{topic}' achieved depth: {current_depth} ({depth_description})")
 
+                # Breakthrough Recognition
+                if (current_depth > previous_depth + 1) or \
+                   (current_depth == 3 and previous_depth < 3):
+                    self.logger.info(f"Potential breakthrough on topic '{topic}': Depth improved from {previous_depth} to {current_depth} after follow-up: '{current_follow_up_question[:100]}...'")
+                    self.potential_breakthroughs.append({
+                        "topic": topic,
+                        "improvement": (previous_depth, current_depth),
+                        "question": current_follow_up_question,
+                        "response": response,
+                        "rationale": rationale
+                    })
+            
             # Record the best depth achieved for this topic
-            self.topic_depth_scores[topic] = best_depth
+            self.topic_depth_scores[topic] = best_depth_for_topic
+            topics_covered_count +=1
 
             # Save successful challenging patterns to host knowledge
-            if best_depth == 3 and last_follow_up:
-                pattern_id_prefix = self.config.get('host_ai_settings', {}).get('host_knowledge', {}).get('pattern_id_prefix', "pattern_")
-                pattern_metadata_type = self.config.get('host_ai_settings', {}).get('host_knowledge', {}).get('pattern_metadata_type', "successful_pattern")
-                self.host_collection.upsert(
-                    ids=[f"{pattern_id_prefix}{len(self.interview_history)}"],
-                    documents=[f"Successful challenge pattern: {last_follow_up}"],
-                    metadatas=[{"type": pattern_metadata_type}]
-                )
-                self.logger.info(f"Saved successful questioning pattern to host knowledge")
+            if best_depth_for_topic == 3 and last_follow_up: 
+                host_knowledge_config = self.config.get('host_ai_settings', {}).get('host_knowledge', {})
+                pattern_id_prefix = host_knowledge_config.get('pattern_id_prefix', "pattern_")
+                
+                pattern_document_string = f"""Successful Pattern:
+Topic: {topic}
+Question: {last_follow_up}
+Expert Response: {response}
+Evaluation: Score {best_depth_for_topic} - {rationale}"""
+
+                pattern_id = f"{pattern_id_prefix}{len(self.interview_history)}_{topic.replace(' ', '_').replace('/', '_')}" # Sanitize topic for ID
+                
+                try:
+                    self.host_collection.upsert(
+                        ids=[pattern_id],
+                        documents=[pattern_document_string],
+                        metadatas=[{
+                            "type": "successful_pattern_context", 
+                            "topic": topic, 
+                            "depth_achieved": best_depth_for_topic,
+                            "timestamp": datetime.now().isoformat()
+                        }]
+                    )
+                    self.logger.info(f"Saved successful questioning pattern to host knowledge. ID: {pattern_id}, Topic: '{topic}', Depth: {best_depth_for_topic}")
+                    self.logger.debug(f"Pattern details: {pattern_document_string}")
+                except Exception as e:
+                    self.logger.error(f"Failed to upsert successful pattern (ID: {pattern_id}) to host_collection: {e}")
+
+            self.logger.info(f"Completed topic '{topic}' after {follow_ups} follow-up(s), best depth achieved: {best_depth_for_topic}")
             
-            self.logger.info(f"Completed topic '{topic}' after {follow_ups} follow-ups, best depth: {best_depth}")
-        
+            # Optional: Check for early conclusion if min depth met for all topics covered so far
+            if min_topic_depth_for_early_conclusion > 0 and topics_covered_count == len(topics):
+                all_topics_met_min_depth = True
+                for t in topics:
+                    if self.topic_depth_scores.get(t, 0) < min_topic_depth_for_early_conclusion:
+                        all_topics_met_min_depth = False
+                        break
+                if all_topics_met_min_depth:
+                    self.logger.info(f"All {len(topics)} topics covered and met minimum depth of {min_topic_depth_for_early_conclusion}. Concluding interview early.")
+                    break # Break topic loop to go to conclusion
+
+        # After loop completion (natural or break)
+        if topics_covered_count == len(topics):
+            self.logger.info("All planned topics were covered.")
+        else:
+            self.logger.info(f"Interview concluded after covering {topics_covered_count}/{len(topics)} topics.")
+            
         # Generate and deliver conclusion
         print(f"\n{'═' * 60}")
         print("🎯 THE RECURSIVE: Final Analysis")

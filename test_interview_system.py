@@ -301,6 +301,115 @@ class TestRecursiveInterviewSystem(unittest.TestCase):
         self.assertEqual(result, 'But how would you implement that regulation?')
         self.mock_ollama_client_instance.generate.assert_called_once()
 
+    # --- Test for setup_mlk_expert ---
+    @patch('builtins.open', new_callable=unittest.mock.mock_open)
+    def test_setup_mlk_expert_success(self, mock_open):
+        mock_persona_content = """
+# Martin Luther King Jr. — Evolved Digital Persona (1929-2025)
+
+**MLK:** I am Martin Luther King Jr., now 96 years old in 2025.
+This is a valid chunk.
+
+HOST: This should be skipped.
+**MLK:** Another valid chunk, short but over 20 chars.
+
+## A Markdown Heading
+---
+A separator
+Short line.
+**MLK:** This line is long enough to be included.
+"""
+        mock_open.read_data = mock_persona_content
+        mock_open.return_value.read.return_value = mock_persona_content
+        
+        self.system.config['persona_settings']['default_persona_file_path'] = "personas/dummy_mlk.md"
+        
+        self.system.setup_mlk_expert()
+
+        self.mock_expert_collection.upsert.assert_called_once()
+        args, _ = self.mock_expert_collection.upsert.call_args
+        
+        expected_docs = [
+            "I am Martin Luther King Jr., now 96 years old in 2025.\nThis is a valid chunk.",
+            "Another valid chunk, short but over 20 chars.",
+            "This line is long enough to be included."
+        ]
+        self.assertEqual(args[0]['documents'], expected_docs)
+        
+        expected_ids = [
+            self.system.config['persona_settings']['persona_doc_id_prefix'] + "1",
+            self.system.config['persona_settings']['persona_doc_id_prefix'] + "2",
+            self.system.config['persona_settings']['persona_doc_id_prefix'] + "3",
+        ]
+        self.assertEqual(args[0]['ids'], expected_ids)
+        
+        expected_metadatas = [
+            {"source": "personas/dummy_mlk.md", "type": "base_persona"},
+            {"source": "personas/dummy_mlk.md", "type": "base_persona"},
+            {"source": "personas/dummy_mlk.md", "type": "base_persona"},
+        ]
+        self.assertEqual(args[0]['metadatas'], expected_metadatas)
+
+    @patch('builtins.open', side_effect=FileNotFoundError("File not found for testing"))
+    @patch('sys.stdout', new_callable=io.StringIO) # To capture print statements
+    def test_setup_mlk_expert_file_not_found_uses_fallback(self, mock_stdout, mock_open):
+        self.system.config['persona_settings']['default_persona_file_path'] = "personas/non_existent.md"
+        
+        self.system.setup_mlk_expert()
+        
+        self.assertIn("Error reading persona file personas/non_existent.md: File not found for testing. Using fallback knowledge.", mock_stdout.getvalue())
+        
+        self.mock_expert_collection.upsert.assert_called_once()
+        args, _ = self.mock_expert_collection.upsert.call_args
+        
+        # Check if fallback documents are being processed
+        self.assertTrue(len(args[0]['documents']) > 0)
+        self.assertTrue("I am Martin Luther King Jr., now 96 years old in 2025." in args[0]['documents'][0])
+        self.assertEqual(args[0]['metadatas'][0]['source'], "personas/non_existent.md") # Source still reflects attempted path
+
+    # --- Tests for detect_comfort_zone_patterns ---
+    def test_detect_comfort_zone_patterns(self):
+        # Setup comfort zone phrases in config for this test
+        self.system.config['expert_defaults']['martin_luther_king_jr']['comfort_zone_phrases'] = [
+            "the arc of the moral universe",
+            "beloved community",
+            "nonviolence is the answer"
+        ]
+        self.system.comfort_zone_patterns = [] # Reset for each test scenario if needed
+
+        # Case 1: Single phrase found
+        response1 = "We must strive for the beloved community."
+        is_comfort, patterns = self.system.detect_comfort_zone_patterns(response1, "MLK")
+        self.assertTrue(is_comfort)
+        self.assertEqual(patterns, ["beloved community"])
+        self.assertEqual(self.system.comfort_zone_patterns, ["beloved community"])
+
+        # Case 2: Multiple phrases found (and case insensitivity)
+        self.system.comfort_zone_patterns = [] # Reset
+        response2 = "The Arc of the Moral Universe is long, but it bends towards justice. Nonviolence is the answer."
+        is_comfort, patterns = self.system.detect_comfort_zone_patterns(response2, "MLK")
+        self.assertTrue(is_comfort)
+        self.assertIn("the arc of the moral universe", patterns)
+        self.assertIn("nonviolence is the answer", patterns)
+        self.assertIn("the arc of the moral universe", self.system.comfort_zone_patterns)
+        self.assertIn("nonviolence is the answer", self.system.comfort_zone_patterns)
+
+        # Case 3: No comfort phrase found
+        self.system.comfort_zone_patterns = [] # Reset
+        response3 = "This is a new thought about digital ethics."
+        is_comfort, patterns = self.system.detect_comfort_zone_patterns(response3, "MLK")
+        self.assertFalse(is_comfort)
+        self.assertEqual(patterns, [])
+        self.assertEqual(self.system.comfort_zone_patterns, [])
+
+        # Case 4: Empty response
+        self.system.comfort_zone_patterns = [] # Reset
+        response4 = ""
+        is_comfort, patterns = self.system.detect_comfort_zone_patterns(response4, "MLK")
+        self.assertFalse(is_comfort)
+        self.assertEqual(patterns, [])
+        self.assertEqual(self.system.comfort_zone_patterns, [])
+
     # --- Test for generate_expert_response ---
     def test_generate_expert_response(self):
         expert_name = "Test Expert"
@@ -312,13 +421,81 @@ class TestRecursiveInterviewSystem(unittest.TestCase):
             "documents": [["Some relevant knowledge about AI"]],
             "ids": [["doc1"]]
         }
+        # Mock web search (as it's part of generate_expert_response now)
+        with patch.object(self.system, 'perform_web_search', return_value=[]) as mock_web_search:
+            self.mock_ollama_client_instance.generate.return_value = {'response': 'AI is a powerful tool that requires careful consideration.'}
+            
+            result = self.system.generate_expert_response(expert_name, question, conversation_history)
+            
+            self.assertEqual(result, 'AI is a powerful tool that requires careful consideration.')
+            self.mock_ollama_client_instance.generate.assert_called_once()
+            mock_web_search.assert_called_once_with(question)
+
+
+    # --- Basic End-to-End Test for run_interview ---
+    @patch.object(RecursiveInterviewSystem, 'save_transcript')
+    @patch.object(RecursiveInterviewSystem, 'setup_mlk_expert')
+    @patch.object(RecursiveInterviewSystem, 'perform_web_search', return_value=[]) # Mock web search to return no snippets
+    @patch.object(RecursiveInterviewSystem, 'detect_comfort_zone_patterns', return_value=(False, [])) # Mock comfort zone
+    def test_run_interview_basic_flow(self, mock_detect_comfort, mock_perform_web_search, mock_setup_expert, mock_save_transcript):
+        # Define the sequence of responses from the LLM
+        self.mock_ollama_client_instance.generate.side_effect = [
+            # 1. Host Introduction (conduct_interview_opening calls generate_expert_response)
+            {'response': "I'm Test Expert, evolved and ready."},  # Expert's intro response
+            # 2. Host asks opening question for Topic 1
+            {'response': "What is your opening thought on Test Topic 1?"}, # Host's opening question
+            # 3. Expert responds to opening question
+            {'response': "My opening thought on Test Topic 1 is positive."}, # Expert's response
+            # 4. Evaluation of expert's response (let's say it's depth 2, needs follow-up)
+            {'response': "Score: 2\nRationale: A bit shallow, needs more."},
+            # 5. Host asks follow-up question
+            {'response': "Can you elaborate further on Test Topic 1?"}, # Host's follow-up
+            # 6. Expert responds to follow-up
+            {'response': "Elaborating further, Test Topic 1 is complex but promising."}, # Expert's follow-up response
+            # 7. Evaluation of follow-up (let's say it's depth 3, good)
+            {'response': "Score: 3\nRationale: Excellent depth achieved."},
+            # 8. Conclusion
+            {'response': "This was a great interview. We covered Test Topic 1 well. The end."} # Host's conclusion
+        ]
+
+        # Mock RAG queries to return empty
+        self.mock_expert_collection.query.return_value = {"documents": [[]], "ids": [[]]}
+        self.mock_host_collection.query.return_value = {"documents": [[]], "ids": [[]]}
+
+        # Run the interview
+        self.system.run_interview(
+            expert_name="Test Expert", 
+            topics=["Test Topic 1"], 
+            max_exchanges=self.system.config['interview']['max_exchanges'] # Use configured max_exchanges
+        )
+
+        # Assertions
+        mock_setup_expert.assert_called_once() # From main() call if not mocked there, or here if part of run_interview setup
         
-        self.mock_ollama_client_instance.generate.return_value = {'response': 'AI is a powerful tool that requires careful consideration.'}
-        
-        result = self.system.generate_expert_response(expert_name, question, conversation_history)
-        
-        self.assertEqual(result, 'AI is a powerful tool that requires careful consideration.')
-        self.mock_ollama_client_instance.generate.assert_called_once()
+        # Check that generate was called multiple times (exact number can be tricky due to complex flow)
+        self.assertTrue(self.mock_ollama_client_instance.generate.call_count >= 7) # Intro, Q1, R1, E1, FUpQ1, FUpR1, E2, Conclusion
+
+        # Check some key calls to generate (using call_args_list to inspect specific calls)
+        # This is illustrative; specific prompts depend heavily on your templates
+        # For example, check if the evaluation prompt was called
+        evaluation_prompt_template = self.system.config['prompts']['evaluation']['main_prompt']
+        made_evaluation_call = any(
+            evaluation_prompt_template.split(" ")[0] in call_args[0][0].get('prompt', '')
+            for call_args in self.mock_ollama_client_instance.generate.call_args_list
+        )
+        self.assertTrue(made_evaluation_call, "Evaluation prompt was not generated.")
+
+        # Check if the conclusion prompt was called
+        # This is a simplified check; you might need to be more specific
+        made_conclusion_call = any(
+            "concluded an interview with Test Expert" in call_args[0][0].get('prompt', '')
+            for call_args in self.mock_ollama_client_instance.generate.call_args_list
+        )
+        self.assertTrue(made_conclusion_call, "Conclusion prompt was not generated.")
+
+        mock_save_transcript.assert_called_once()
+        mock_perform_web_search.assert_called() # Called during expert responses
+        mock_detect_comfort.assert_called() # Called after expert responses
 
 if __name__ == '__main__':
     unittest.main()

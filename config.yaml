@@ -37,17 +37,18 @@ evaluation_llm_temperature: 0.1
 
 # --- ChromaDB Settings ---
 chromadb:
-  path: "./chroma_db"
-  host_collection_name: "host_knowledge"
-  expert_collection_name: "expert_knowledge"
-  default_n_results: 3
-  host_pattern_n_results: 2
+  path: "./chroma_db" # Filesystem path for ChromaDB persistence
+  host_collection_name: "host_knowledge" # Collection name for host's learned patterns
+  expert_collection_name: "expert_knowledge" # Collection name for expert's knowledge base
+  default_n_results: 3 # Default number of results to fetch from ChromaDB for general queries
+  host_pattern_n_results: 2 # Number of host patterns to retrieve for augmenting host prompts (used if not overridden by learning settings)
 
 # --- Interview Flow Control ---
 interview:
-  max_exchanges: 15
-  max_follow_ups_per_response: 2
-  conversation_history_last_n: 6
+  max_exchanges: 15 # Maximum number of conversational exchanges (Host + Expert = 1 exchange) before concluding
+  max_follow_ups_per_response: 2 # Maximum number of follow-up questions the host can ask for a single expert response
+  conversation_history_last_n: 6 # Number of recent exchanges to include in LLM prompts
+  min_topic_depth_before_early_conclusion: 2 # If all topics reach this depth (1-3), conclude interview early. Set to 0 to disable.
 
 # --- Persona Settings ---
 persona_settings:
@@ -66,8 +67,12 @@ host_ai_settings:
 
   host_knowledge:
     successful_pattern_query: "successful challenging questions"
-    pattern_id_prefix: "pattern_"
-    pattern_metadata_type: "successful_pattern"
+    pattern_id_prefix: "pattern_" # Prefix for document IDs when saving successful patterns
+    pattern_metadata_type: "successful_pattern" # Metadata type for basic successful patterns (legacy, see learning section)
+  learning: # Settings for Host AI's learning from successful interview patterns
+    enabled: true # Whether the host should attempt to learn from past successful patterns
+    max_patterns_to_inject_in_prompt: 2 # Maximum number of learned patterns to inject into the host's question generation prompt
+    query_successful_patterns_by_topic: true # Whether to prioritize learned patterns matching the current topic
 
 # --- All Prompt Templates ---
 prompts:
@@ -190,6 +195,14 @@ prompts:
     rationale_no_rationale_provided: "No rationale provided (single number response)."
     rationale_parsing_error_prefix: "Default score due to parsing error. Raw output:"
     rationale_exception_prefix: "Default score due to exception during parsing:"
+
+# --- Web Search Settings ---
+# Configuration for integrating real-time web search results into the expert's knowledge
+web_search_settings:
+  enabled: true # Master switch for enabling/disabling web search integration
+  search_url_template: "https://duckduckgo.com/html/?q={query}" # URL template for web searches. {query} will be replaced with the search query.
+  max_snippets_to_integrate: 3 # Maximum number of web search snippets to add to the expert's knowledge base per query.
+  min_snippet_length: 50 # Minimum character length for a web search snippet to be considered useful.
 
 # --- Expert-Specific Settings ---
 # These can be customized per expert
