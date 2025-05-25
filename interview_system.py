@@ -55,6 +55,8 @@ class RecursiveInterviewSystem:
         # Track interview state
         self.interview_history = []
         self.follow_up_count = {}
+        self.topic_depth_scores = {}  # Track depth achieved per topic
+        self.comfort_zone_patterns = []  # Track repeated comfort zone responses
 
     def _setup_logging(self):
         """Setup comprehensive logging system"""
@@ -316,6 +318,22 @@ These systems learn from our past prejudices and encode them into the future. Pr
         text = ' '.join(text.split())
         
         return text.strip()
+
+    def detect_comfort_zone_patterns(self, response, expert_name):
+        """Detect if expert is using familiar phrases or comfort zone responses"""
+        expert_defaults = self.config.get('expert_defaults', {}).get('martin_luther_king_jr', {})
+        comfort_phrases = expert_defaults.get('comfort_zone_phrases', [])
+        
+        comfort_zone_detected = []
+        for phrase in comfort_phrases:
+            if phrase.lower() in response.lower():
+                comfort_zone_detected.append(phrase)
+        
+        if comfort_zone_detected:
+            self.comfort_zone_patterns.extend(comfort_zone_detected)
+            self.logger.info(f"Comfort zone patterns detected: {comfort_zone_detected}")
+            
+        return len(comfort_zone_detected) > 0, comfort_zone_detected
     
     def conduct_interview_opening(self, expert_name):
         """Conduct the interview opening sequence"""
@@ -508,8 +526,56 @@ These systems learn from our past prejudices and encode them into the future. Pr
             self.logger.error(f"Evaluation exception: {str(e)}. Raw output: {cleaned_result}")
             return 2, f"{rationale_exception_prefix} {str(e)}. Raw output: '{cleaned_result[:100]}...'"
 
+    def generate_interview_conclusion(self, expert_name, topics_covered):
+        """Generate a thoughtful conclusion to the interview"""
+        
+        # Analyze patterns found during interview
+        comfort_zone_summary = ""
+        if self.comfort_zone_patterns:
+            frequent_patterns = {}
+            for pattern in self.comfort_zone_patterns:
+                frequent_patterns[pattern] = frequent_patterns.get(pattern, 0) + 1
+            most_frequent = sorted(frequent_patterns.items(), key=lambda x: x[1], reverse=True)[:3]
+            comfort_zone_summary = f"Recurring comfort zone phrases: {[p[0] for p in most_frequent]}"
+        
+        # Get depth summary
+        depth_summary = ""
+        if self.topic_depth_scores:
+            avg_depth = sum(self.topic_depth_scores.values()) / len(self.topic_depth_scores)
+            depth_summary = f"Average depth achieved: {avg_depth:.1f}/3.0"
+        
+        conclusion_prompt = f"""
+        {self.host_persona}
+
+        You have just concluded an interview with {expert_name} covering these topics: {topics_covered}
+
+        Interview Analysis:
+        - Total exchanges: {len(self.interview_history)}
+        - {comfort_zone_summary if comfort_zone_summary else "No significant comfort zone patterns detected"}
+        - {depth_summary if depth_summary else "Depth analysis not available"}
+
+        Generate a thoughtful conclusion that:
+        1. Acknowledges what was revealed through the recursive questioning process
+        2. Calls out patterns where the expert retreated to familiar territory when pressed
+        3. Reflects on what remains unresolved or what deeper questions emerged
+        4. Ends with the impact this should have on listeners - were they awakened or entertained?
+
+        This is "The Recursive" - we don't comfort, we challenge. Be honest about whether we succeeded in our mission.
+
+        Generate a concluding statement that synthesizes the interview's journey:
+        """
+        
+        response = self._make_llm_request(
+            request_type="INTERVIEW_CONCLUSION",
+            model=self.config.get('host_llm_model', 'qwen3:4b'),
+            prompt=conclusion_prompt,
+            options={"temperature": self.config.get('host_llm_temperature', 0.85)}
+        )
+        
+        return self.clean_response(response['response'])
+
     def run_interview(self, expert_name, topics, max_exchanges=None):
-        """Run a complete interview with proper opening and logging"""
+        """Run a complete interview with proper opening and conclusion"""
         if max_exchanges is None:
             max_exchanges = self.config.get('interview', {}).get('max_exchanges', 15)
         
@@ -523,8 +589,8 @@ These systems learn from our past prejudices and encode them into the future. Pr
         max_follow_ups = self.config.get('interview', {}).get('max_follow_ups_per_response', 2)
         
         for i, topic in enumerate(topics):
-            if exchange_count >= max_exchanges:
-                self.logger.warning(f"Reached max exchanges ({max_exchanges}), stopping interview")
+            if exchange_count >= max_exchanges - 2:  # Reserve space for conclusion
+                self.logger.warning(f"Near max exchanges ({max_exchanges}), wrapping up after this topic")
                 break
                 
             self.logger.info(f"Starting topic {i+1}/{len(topics)}: {topic}")
@@ -542,6 +608,11 @@ These systems learn from our past prejudices and encode them into the future. Pr
                 self.get_conversation_history()
             )
             print(f"\n👤 {expert_name.upper()}: {response}")
+            
+            # Check for comfort zone patterns
+            is_comfort_zone, comfort_patterns = self.detect_comfort_zone_patterns(response, expert_name)
+            if is_comfort_zone:
+                print(f"   [🚨 Comfort zone detected: {comfort_patterns[:2]}]")
             
             # Add to history
             self.interview_history.append({
@@ -561,12 +632,13 @@ These systems learn from our past prejudices and encode them into the future. Pr
             depth, rationale = self.evaluate_response_depth(question, response)
             follow_ups = 0
             last_follow_up = None
+            best_depth = depth
             
             depth_description = 'Shallow' if depth == 1 else ('Moderate' if depth == 2 else 'Profound')
             print(f"\n💭 [Initial Response depth: {depth_description}. Rationale: {rationale}]")
             self.logger.info(f"Topic '{topic}' initial response depth: {depth} ({depth_description})")
 
-            while depth < 3 and follow_ups < max_follow_ups and exchange_count < max_exchanges:
+            while depth < 3 and follow_ups < max_follow_ups and exchange_count < max_exchanges - 2:
                 self.logger.info(f"Generating follow-up {follow_ups + 1}/{max_follow_ups} for topic '{topic}'")
                 print(f"   [Pushing deeper...]")
                 
@@ -588,6 +660,11 @@ These systems learn from our past prejudices and encode them into the future. Pr
                 )
                 print(f"\n👤 {expert_name.upper()}: {response}")
                 
+                # Check for comfort zone patterns again
+                is_comfort_zone, comfort_patterns = self.detect_comfort_zone_patterns(response, expert_name)
+                if is_comfort_zone:
+                    print(f"   [🚨 Retreating to comfort zone: {comfort_patterns[:2]}]")
+                
                 # Add to history
                 self.interview_history.append({
                     "speaker": "HOST",
@@ -605,12 +682,16 @@ These systems learn from our past prejudices and encode them into the future. Pr
                 
                 # Re-evaluate
                 depth, rationale = self.evaluate_response_depth(follow_up, response)
+                best_depth = max(best_depth, depth)
                 depth_description = 'Shallow' if depth == 1 else ('Moderate' if depth == 2 else 'Profound')
                 print(f"\n💭 [Follow-up Response depth: {depth_description}. Rationale: {rationale}]")
                 self.logger.info(f"Follow-up {follow_ups} depth: {depth} ({depth_description})")
 
+            # Record the best depth achieved for this topic
+            self.topic_depth_scores[topic] = best_depth
+
             # Save successful challenging patterns to host knowledge
-            if depth == 3 and last_follow_up:
+            if best_depth == 3 and last_follow_up:
                 pattern_id_prefix = self.config.get('host_ai_settings', {}).get('host_knowledge', {}).get('pattern_id_prefix', "pattern_")
                 pattern_metadata_type = self.config.get('host_ai_settings', {}).get('host_knowledge', {}).get('pattern_metadata_type', "successful_pattern")
                 self.host_collection.upsert(
@@ -620,13 +701,30 @@ These systems learn from our past prejudices and encode them into the future. Pr
                 )
                 self.logger.info(f"Saved successful questioning pattern to host knowledge")
             
-            self.logger.info(f"Completed topic '{topic}' after {follow_ups} follow-ups")
+            self.logger.info(f"Completed topic '{topic}' after {follow_ups} follow-ups, best depth: {best_depth}")
+        
+        # Generate and deliver conclusion
+        print(f"\n{'═' * 60}")
+        print("🎯 THE RECURSIVE: Final Analysis")
+        print("═" * 60)
+        
+        conclusion = self.generate_interview_conclusion(expert_name, topics)
+        print(f"\n🎤 HOST: {conclusion}")
+        
+        # Add conclusion to history
+        self.interview_history.append({
+            "speaker": "HOST",
+            "text": conclusion,
+            "topic": "Conclusion"
+        })
         
         print("\n" + "=" * 60)
         print("📝 Interview Complete! Thank you for joining The Recursive.")
         print("🎯 Remember: If you weren't challenged, we failed. If you were, we succeeded.")
         
         self.logger.info(f"Interview completed. Total exchanges: {len(self.interview_history)}")
+        self.logger.info(f"Comfort zone patterns detected: {len(set(self.comfort_zone_patterns))}")
+        self.logger.info(f"Topic depth scores: {self.topic_depth_scores}")
         self.save_transcript()
 
     def get_conversation_history(self, last_n=None):
@@ -650,6 +748,9 @@ These systems learn from our past prejudices and encode them into the future. Pr
                 "total_exchanges": len(self.interview_history),
                 "expert_name": self.config.get('default_expert_name', 'Unknown'),
                 "topics": self.config.get('default_topics', []),
+                "topic_depth_scores": self.topic_depth_scores,
+                "comfort_zone_patterns_detected": len(set(self.comfort_zone_patterns)),
+                "unique_comfort_phrases": list(set(self.comfort_zone_patterns)),
                 "config_snapshot": {
                     "host_llm_model": self.config.get('host_llm_model'),
                     "expert_llm_model": self.config.get('expert_llm_model'),
